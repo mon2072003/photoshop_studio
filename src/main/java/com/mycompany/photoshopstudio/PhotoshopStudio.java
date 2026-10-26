@@ -26,6 +26,8 @@ import java.util.List;
 import java.util.prefs.Preferences;
 
 public class PhotoshopStudio extends JFrame {
+    static { installAppTypography(); }
+
     private final CanvasPanel canvas = new CanvasPanel();
     private JScrollPane canvasScroll;
     private final UndoManager undo = new UndoManager();
@@ -54,7 +56,9 @@ public class PhotoshopStudio extends JFrame {
     private JButton colorButton;
     private JLabel pickerValueLabel;
     private JButton undoButton, redoButton;
-    private JSlider brushSizeSlider, zoomSlider;
+    private JSlider brushSizeSlider;
+    private JLabel zoomValueLabel;
+    private JPanel zoomControlsPanel;
     private JComboBox<String> cropTypeSelector;
     private JMenu savedWorkspacesMenu;
     private String currentWorkspaceName;
@@ -88,9 +92,41 @@ public class PhotoshopStudio extends JFrame {
         canvasScroll.getViewport().setBackground(new Color(55, 55, 60));
         add(canvasScroll, BorderLayout.CENTER);
         add(createLayersPanel(), BorderLayout.EAST);
-        status.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10));
-        add(status, BorderLayout.SOUTH);
+        JPanel footer = new JPanel(new BorderLayout(8, 0)); footer.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, new Color(205, 208, 214)));
+        status.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10)); footer.add(status, BorderLayout.CENTER);
+        footer.add(zoomControlsPanel, BorderLayout.EAST); add(footer, BorderLayout.SOUTH);
         updateStatus("Ready");
+    }
+
+    private static void installAppTypography() {
+        Font regular = new Font("Segoe UI", Font.PLAIN, 13);
+        Font control = new Font("Segoe UI", Font.PLAIN, 12);
+        Font menu = new Font("Segoe UI", Font.PLAIN, 13);
+        Font message = new Font("Segoe UI", Font.PLAIN, 14);
+        UIManager.put("Button.font", control);
+        UIManager.put("ToggleButton.font", control);
+        UIManager.put("Label.font", regular);
+        UIManager.put("CheckBox.font", regular);
+        UIManager.put("RadioButton.font", regular);
+        UIManager.put("ComboBox.font", control);
+        UIManager.put("Spinner.font", control);
+        UIManager.put("Slider.font", control);
+        UIManager.put("List.font", regular);
+        UIManager.put("MenuBar.font", menu);
+        UIManager.put("Menu.font", menu);
+        UIManager.put("MenuItem.font", menu);
+        UIManager.put("CheckBoxMenuItem.font", menu);
+        UIManager.put("RadioButtonMenuItem.font", menu);
+        UIManager.put("TextField.font", regular);
+        UIManager.put("TextArea.font", regular);
+        UIManager.put("TextPane.font", regular);
+        UIManager.put("EditorPane.font", regular);
+        UIManager.put("ToolTip.font", new Font("Segoe UI", Font.PLAIN, 12));
+        UIManager.put("TitledBorder.font", new Font("Segoe UI", Font.BOLD, 12));
+        UIManager.put("OptionPane.messageFont", message);
+        UIManager.put("OptionPane.buttonFont", control);
+        UIManager.put("FileChooser.listFont", regular);
+        UIManager.put("FileChooser.detailsView.font", regular);
     }
 
     private JPanel createLayersPanel() {
@@ -98,6 +134,20 @@ public class PhotoshopStudio extends JFrame {
         layerList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         layerList.setCellRenderer(new DefaultListCellRenderer() { @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean selected, boolean focused) { JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, selected, focused); if (value instanceof MovableItem item) { label.setText((item.visible ? "" : "[Hidden] ") + item.name); label.setIcon(new EditorIcon(layerIconType(item))); label.setIconTextGap(6); } return label; } });
         layerList.addListSelectionListener(e -> { if (!e.getValueIsAdjusting()) { canvas.selectedItem = layerList.getSelectedValue(); if (canvas.selectedItem != null) opacitySlider.setValue((int) (canvas.selectedItem.opacity * 100)); updateLayerProperties(); } });
+        layerList.addMouseListener(new MouseAdapter() {
+            private void showLayerMenu(MouseEvent e) {
+                if (!e.isPopupTrigger()) return;
+                int index = layerList.locationToIndex(e.getPoint());
+                if (index < 0) return;
+                Rectangle bounds = layerList.getCellBounds(index, index);
+                if (bounds == null || !bounds.contains(e.getPoint())) return;
+                layerList.setSelectedIndex(index);
+                MovableItem item = layerList.getModel().getElementAt(index);
+                createLayerContextMenu(item).show(layerList, e.getX(), e.getY());
+            }
+            @Override public void mousePressed(MouseEvent e) { showLayerMenu(e); }
+            @Override public void mouseReleased(MouseEvent e) { showLayerMenu(e); }
+        });
         panel.add(new JScrollPane(layerList), BorderLayout.CENTER);
         JPanel controls = new JPanel(new BorderLayout(2, 2));
         opacitySlider.setToolTipText("Selected layer opacity"); opacitySlider.addChangeListener(e -> { MovableItem item = layerList.getSelectedValue(); if (item != null) { item.opacity = opacitySlider.getValue() / 100f; updateLayerProperties(); canvas.repaint(); } });
@@ -137,6 +187,24 @@ public class PhotoshopStudio extends JFrame {
     private void unregisterItem(MovableItem item) { movableItems.remove(item); layerModel.removeElement(item); }
     private void refreshLayers() { MovableItem selected = layerList.getSelectedValue(); layerModel.clear(); for (int i = movableItems.size() - 1; i >= 0; i--) layerModel.addElement(movableItems.get(i)); if (selected != null && movableItems.contains(selected)) layerList.setSelectedValue(selected, true); layerList.repaint(); updateLayerProperties(); }
 
+    private JPopupMenu createLayerContextMenu(MovableItem item) {
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem select = new JMenuItem("Select"); select.addActionListener(e -> { layerList.setSelectedValue(item, true); canvas.selectedItem = item; updateLayerProperties(); canvas.repaint(); updateStatus("Selected " + item.name); });
+        JMenuItem move = new JMenuItem("Move"); move.addActionListener(e -> { layerList.setSelectedValue(item, true); canvas.selectedItem = item; tool = Tool.MOVE; updateToolCursor(); updateStatus("Drag to move " + item.name); });
+        JMenuItem visibility = new JMenuItem(item.visible ? "Hide Layer" : "Show Layer"); visibility.addActionListener(e -> { item.visible = !item.visible; layerList.repaint(); canvas.repaint(); updateLayerProperties(); });
+        JMenuItem resize = new JMenuItem("Resize..."); resize.addActionListener(e -> resizeItem(item));
+        JMenuItem rotate = new JMenuItem("Rotate Angle..."); rotate.addActionListener(e -> rotateItemFreely(item));
+        JMenuItem flipH = new JMenuItem("Flip Horizontal"); flipH.addActionListener(e -> transformItem(item, "flipH"));
+        JMenuItem flipV = new JMenuItem("Flip Vertical"); flipV.addActionListener(e -> transformItem(item, "flipV"));
+        JMenuItem front = new JMenuItem("Bring to Front"); front.addActionListener(e -> { movableItems.remove(item); movableItems.add(item); refreshLayers(); canvas.repaint(); });
+        JMenuItem back = new JMenuItem("Send to Back"); back.addActionListener(e -> { movableItems.remove(item); movableItems.add(0, item); refreshLayers(); canvas.repaint(); });
+        JMenuItem delete = new JMenuItem("Delete Layer"); delete.addActionListener(e -> { unregisterItem(item); canvas.selectedItem = null; canvas.repaint(); updateLayerProperties(); });
+        menu.add(select); menu.add(move);
+        if (item.textContent != null) { JMenuItem edit = new JMenuItem("Edit Text..."); edit.addActionListener(e -> editTextLayer(item)); menu.add(edit); }
+        menu.add(visibility); menu.addSeparator(); menu.add(resize); menu.add(rotate); menu.add(flipH); menu.add(flipV); menu.addSeparator(); menu.add(front); menu.add(back); menu.addSeparator(); menu.add(delete);
+        return menu;
+    }
+
     private JMenuBar createMenuBar() {
         JMenuBar bar = new JMenuBar();
         JMenu file = new JMenu("File");
@@ -167,7 +235,7 @@ public class PhotoshopStudio extends JFrame {
         JMenu view = new JMenu("View");
         addZoomItem(view, "50%", 0.5); addZoomItem(view, "100%", 1.0); addZoomItem(view, "150%", 1.5); addZoomItem(view, "200%", 2.0);
         view.addSeparator(); JMenuItem reset = new JMenuItem("Reset View"); reset.addActionListener(e -> { canvas.setZoom(1.0); updateStatus("View reset"); }); view.add(reset);
-        JMenu help = new JMenu("Help"); JMenuItem about = new JMenuItem("About Photoshop Studio"); about.addActionListener(e -> JOptionPane.showMessageDialog(this, "Photoshop Studio\nJava Swing image editor", "About", JOptionPane.INFORMATION_MESSAGE)); help.add(about);
+        JMenu help = new JMenu("Help"); JMenuItem about = new JMenuItem("About Photoshop Studio"); about.addActionListener(e -> showAboutDialog()); help.add(about);
         bar.add(file); bar.add(edit); bar.add(imageMenu); bar.add(effects); bar.add(view); bar.add(help); return bar;
     }
 
@@ -189,6 +257,57 @@ public class PhotoshopStudio extends JFrame {
     }
 
     private void addAdjustment(JMenu menu, String label, String type) { JMenuItem item = new JMenuItem(label); item.addActionListener(e -> adjustColor(type)); menu.add(item); }
+
+    private void showAboutDialog() {
+        JDialog dialog = new JDialog(this, "About Photoshop Studio", true);
+        dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+        dialog.setIconImage(createAppIcon());
+        JPanel content = new JPanel(new BorderLayout(0, 12));
+        content.setBorder(BorderFactory.createEmptyBorder(18, 20, 14, 20));
+
+        JPanel heading = new JPanel(new BorderLayout(14, 0));
+        JLabel icon = new JLabel(new ImageIcon(createAppIcon().getScaledInstance(64, 64, Image.SCALE_SMOOTH)));
+        heading.add(icon, BorderLayout.WEST);
+        JPanel titleBlock = new JPanel(); titleBlock.setOpaque(false); titleBlock.setLayout(new BoxLayout(titleBlock, BoxLayout.Y_AXIS));
+        JLabel title = new JLabel("Photoshop Studio"); title.setFont(title.getFont().deriveFont(Font.BOLD, 24f));
+        JLabel subtitle = new JLabel("A desktop image editor built with Java Swing"); subtitle.setForeground(new Color(95, 100, 110));
+        titleBlock.add(Box.createVerticalGlue()); titleBlock.add(title); titleBlock.add(Box.createVerticalStrut(5)); titleBlock.add(subtitle); titleBlock.add(Box.createVerticalGlue());
+        heading.add(titleBlock, BorderLayout.CENTER);
+        content.add(heading, BorderLayout.NORTH);
+
+        JTextArea details = new JTextArea(
+                "ABOUT\n" +
+                "Photoshop Studio is a hands-on desktop editor for arranging images, drawing, adding text and shapes, and applying visual adjustments. The interface is designed around a canvas, a tool bar, and an editable layer list.\n\n" +
+                "EDITING TOOLS\n" +
+                "• Brush and eraser for painting on the canvas or on an image layer\n" +
+                "• Pointer tool for moving image and text layers; free rotation and resizing\n" +
+                "• Text layers with font, color, outline, and shadow controls\n" +
+                "• Rectangles, ellipses, lines, polygons, stars, arrows, and other shapes\n" +
+                "• Color picker with a magnified preview, fill, and gradient tools\n" +
+                "• Drag-and-drop image placement and support for multiple layers\n\n" +
+                "CROPPING AND IMAGE EFFECTS\n" +
+                "Use freeform, fixed-ratio, circle, scrapbook, or perspective crop modes. The Effects menu includes color and tone changes, artistic treatments, blur and detail tools, and brightness, contrast, and saturation adjustments. Effects can be applied to the canvas or the selected image layer.\n\n" +
+                "LAYERS AND WORKFLOW\n" +
+                "The Layers panel lets you select, reorder, show or hide, resize, transform, and adjust the opacity of layers. Right-click an object or layer for context actions. Undo and redo are available while editing. Zoom with the mouse wheel over the canvas; the pointer position anchors the zoom. Use Fit to bring the full image into view.\n\n" +
+                "FILES\n" +
+                "Open common image formats supported by Java ImageIO and export the finished composite as a PNG image. The Windows app bundle includes its own Java runtime, so a separate JDK installation is not required.\n\n" +
+                "PROJECT DETAILS\n" +
+                "Author: Mina Ezzat\n" +
+                "Version: 1.0\n" +
+                "Technology: Java 17, Swing, and Java ImageIO\n" +
+                "This is an independent image-editing project. It is not affiliated with Adobe Inc."
+        );
+        details.setEditable(false); details.setLineWrap(true); details.setWrapStyleWord(true); details.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 13));
+        details.setBorder(BorderFactory.createEmptyBorder(12, 14, 12, 14)); details.setBackground(new Color(250, 250, 252));
+        JScrollPane scroll = new JScrollPane(details); scroll.setBorder(BorderFactory.createLineBorder(new Color(215, 218, 224))); scroll.getVerticalScrollBar().setUnitIncrement(18);
+        content.add(scroll, BorderLayout.CENTER);
+
+        JPanel footer = new JPanel(new BorderLayout());
+        JLabel author = new JLabel("Mina Ezzat  •  Photoshop Studio 1.0"); author.setForeground(new Color(100, 105, 115));
+        JButton close = new JButton("Close"); close.addActionListener(e -> dialog.dispose());
+        footer.add(author, BorderLayout.WEST); footer.add(close, BorderLayout.EAST); content.add(footer, BorderLayout.SOUTH);
+        dialog.setContentPane(content); dialog.setSize(650, 650); dialog.setMinimumSize(new Dimension(540, 500)); dialog.setLocationRelativeTo(this); dialog.setVisible(true);
+    }
 
     private void applyAdjustmentValue(String type, int amount) {
         if (amount == 0) return;
@@ -227,7 +346,8 @@ public class PhotoshopStudio extends JFrame {
 
     private JToolBar createToolBar() {
         JToolBar bar = new JToolBar();
-        bar.setFloatable(false); bar.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
+        bar.setLayout(new BoxLayout(bar, BoxLayout.Y_AXIS));
+        bar.setFloatable(false); bar.setBorder(BorderFactory.createEmptyBorder(1, 4, 1, 4));
         undoButton = new JButton(new EditorIcon("undo")); undoButton.setToolTipText("Undo (Ctrl+Z)");
         redoButton = new JButton(new EditorIcon("redo")); redoButton.setToolTipText("Redo (Ctrl+Y)");
         undoButton.setEnabled(false); redoButton.setEnabled(false);
@@ -259,8 +379,8 @@ public class PhotoshopStudio extends JFrame {
         size.addChangeListener(e -> brushSize = size.getValue());
         brightnessSlider = new JSlider(-100, 100, appliedBrightnessValue); contrastSlider = new JSlider(-100, 100, appliedContrastValue); saturationSlider = new JSlider(-100, 100, appliedSaturationValue);
         JSlider brightness = brightnessSlider, contrast = contrastSlider, saturation = saturationSlider;
-        brightness.setToolTipText("Brightness"); contrast.setToolTipText("Contrast"); saturation.setToolTipText("Saturation");
-        JPanel adjustments = new JPanel(new GridLayout(3, 2, 1, 0)); adjustments.setOpaque(false); adjustments.add(new JLabel("Bri")); adjustments.add(brightness); adjustments.add(new JLabel("Con")); adjustments.add(contrast); adjustments.add(new JLabel("Sat")); adjustments.add(saturation); adjustments.setPreferredSize(new Dimension(145, 42));
+        brightness.setToolTipText("Brightness adjustment"); contrast.setToolTipText("Contrast adjustment"); saturation.setToolTipText("Saturation adjustment");
+        JPanel adjustments = new JPanel(new GridLayout(3, 2, 1, 0)); adjustments.setOpaque(false); adjustments.add(controlIconLabel("brightness", "Brightness")); adjustments.add(brightness); adjustments.add(controlIconLabel("contrast", "Contrast")); adjustments.add(contrast); adjustments.add(controlIconLabel("saturation", "Saturation")); adjustments.add(saturation); adjustments.setPreferredSize(new Dimension(95, 36));
         brightness.addMouseListener(new MouseAdapter() { @Override public void mouseReleased(MouseEvent e) { applyAdjustmentValue("brightness", brightness.getValue()); } });
         contrast.addMouseListener(new MouseAdapter() { @Override public void mouseReleased(MouseEvent e) { applyAdjustmentValue("contrastAdjust", contrast.getValue()); } });
         saturation.addMouseListener(new MouseAdapter() { @Override public void mouseReleased(MouseEvent e) { applyAdjustmentValue("saturationAdjust", saturation.getValue()); } });
@@ -272,20 +392,37 @@ public class PhotoshopStudio extends JFrame {
         javax.swing.event.ChangeListener rgb = e -> { brushColor = new Color(red.getValue(), green.getValue(), blue.getValue()); colorPreview.setBackground(brushColor); color.setBackground(brushColor); };
         red.addChangeListener(rgb); green.addChangeListener(rgb); blue.addChangeListener(rgb);
         color.addActionListener(e -> { Color picked = JColorChooser.showDialog(this, "Brush color", brushColor); if (picked != null) { brushColor = picked; red.setValue(picked.getRed()); green.setValue(picked.getGreen()); blue.setValue(picked.getBlue()); colorPreview.setBackground(picked); color.setBackground(picked); } });
-        JPanel rgbPanel = new JPanel(new GridLayout(3, 2, 1, 0)); rgbPanel.setOpaque(false); rgbPanel.add(new JLabel("R")); rgbPanel.add(red); rgbPanel.add(new JLabel("G")); rgbPanel.add(green); rgbPanel.add(new JLabel("B")); rgbPanel.add(blue); rgbPanel.setPreferredSize(new Dimension(125, 42));
-        JSlider zoom = new JSlider(25, 200, 100); zoomSlider = zoom; zoom.setToolTipText("Zoom level"); zoom.setPreferredSize(new Dimension(125, 28));
-        JLabel zoomValue = new JLabel("100%"); zoomValue.setPreferredSize(new Dimension(42, 22));
-        zoom.addChangeListener(e -> { double value = zoom.getValue() / 100.0; canvas.setZoom(value); zoomValue.setText(zoom.getValue() + "%"); });
+        red.setToolTipText("Red channel (R), 0–255"); green.setToolTipText("Green channel (G), 0–255"); blue.setToolTipText("Blue channel (B), 0–255");
+        JPanel rgbPanel = new JPanel(new GridLayout(3, 2, 1, 0)); rgbPanel.setOpaque(false); rgbPanel.add(controlIconLabel("red", "Red channel (R)")); rgbPanel.add(red); rgbPanel.add(controlIconLabel("green", "Green channel (G)")); rgbPanel.add(green); rgbPanel.add(controlIconLabel("blue", "Blue channel (B)")); rgbPanel.add(blue); rgbPanel.setPreferredSize(new Dimension(72, 36));
+        JButton zoomOut = new JButton("−"); zoomOut.setToolTipText("Zoom out"); zoomOut.addActionListener(e -> canvas.setZoom(canvas.getZoom() / 1.15));
+        zoomValueLabel = new JLabel("100%"); zoomValueLabel.setHorizontalAlignment(SwingConstants.CENTER); zoomValueLabel.setPreferredSize(new Dimension(48, 24)); zoomValueLabel.setToolTipText("Current zoom; use the mouse wheel over the canvas to zoom at the pointer");
+        JButton zoomIn = new JButton("+"); zoomIn.setToolTipText("Zoom in"); zoomIn.addActionListener(e -> canvas.setZoom(canvas.getZoom() * 1.15));
         JButton fit = new JButton("Fit", new EditorIcon("fit")); fit.setToolTipText("Fit image to available canvas");
-        fit.addActionListener(e -> { int vw = canvasScroll.getViewport().getWidth() - 40, vh = canvasScroll.getViewport().getHeight() - 40; double fitZoom = Math.min((double) vw / image.getWidth(), (double) vh / image.getHeight()); int percent = Math.max(25, Math.min(200, (int) (fitZoom * 100))); zoom.setValue(percent); updateStatus("Fit view"); });
+        fit.addActionListener(e -> { int vw = Math.max(1, canvasScroll.getViewport().getWidth() - 40), vh = Math.max(1, canvasScroll.getViewport().getHeight() - 40); double fitZoom = Math.min((double) vw / image.getWidth(), (double) vh / image.getHeight()); canvas.setZoom(fitZoom); updateStatus("Fit view"); });
         JButton shadow = new JButton("Shadow", new EditorIcon("shadow")); shadow.setToolTipText("Add shadow to selected layer"); shadow.addActionListener(e -> applyShadow());
-        shapeType.setPreferredSize(new Dimension(125, 28));
-        bar.add(undoButton); bar.add(redoButton); bar.addSeparator(); bar.add(move); bar.add(brush); bar.add(new JLabel(" Size ")); bar.add(size); bar.add(erase); bar.add(text); bar.add(crop); bar.add(cropType); bar.add(shape); bar.add(shapeType); bar.add(rotate); bar.add(select); bar.add(eyedropper); bar.add(fill); bar.add(gradient); bar.add(color); bar.add(shadow); bar.add(colorPreview); bar.add(new JLabel(" RGB ")); bar.add(rgbPanel); bar.add(new JLabel(" Adjust ")); bar.add(adjustments); bar.add(applyAdjustments);
+        shapeType.setPreferredSize(new Dimension(90, 25)); cropType.setPreferredSize(new Dimension(115, 25)); size.setPreferredSize(new Dimension(70, 22));
+        adjustments.setPreferredSize(new Dimension(95, 36));
+        JPanel toolRow = toolbarRow(); toolRow.setLayout(new FlowLayout(FlowLayout.LEFT, 2, 0));
+        toolRow.add(undoButton); toolRow.add(redoButton); toolRow.add(new JSeparator(SwingConstants.VERTICAL));
+        toolRow.add(move); toolRow.add(brush); toolRow.add(erase); toolRow.add(text); toolRow.add(select); toolRow.add(eyedropper); toolRow.add(fill); toolRow.add(gradient); toolRow.add(rotate);
+
+        JPanel optionsRow = toolbarRow(); optionsRow.setLayout(new FlowLayout(FlowLayout.LEFT, 2, 0));
+        optionsRow.add(new JLabel("Size")); optionsRow.add(size); optionsRow.add(crop); optionsRow.add(cropType); optionsRow.add(shape); optionsRow.add(shapeType); optionsRow.add(shadow);
+        optionsRow.add(color); optionsRow.add(colorPreview); optionsRow.add(rgbPanel);
+        optionsRow.add(adjustments); optionsRow.add(applyAdjustments);
         MouseAdapter hidePickerLens = new MouseAdapter() { @Override public void mousePressed(MouseEvent e) { canvas.hidePickerLens(); } };
-        for (Component component : bar.getComponents()) component.addMouseListener(hidePickerLens);
-        bar.addSeparator(); bar.add(new JLabel(" Zoom ")); bar.add(zoom); bar.add(zoomValue); bar.add(fit);
+        JPanel zoomGroup = new JPanel(new FlowLayout(FlowLayout.LEFT, 1, 0)); zoomGroup.setOpaque(false); zoomGroup.add(zoomOut); zoomGroup.add(zoomValueLabel); zoomGroup.add(zoomIn); zoomGroup.add(fit);
+        zoomControlsPanel = zoomGroup;
+
+        bar.add(toolRow); bar.add(optionsRow);
+        addMouseListenerToTree(bar, hidePickerLens);
+        addMouseListenerToTree(zoomControlsPanel, hidePickerLens);
         return bar;
     }
+
+    private JPanel toolbarRow() { JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 1, 0)); row.setOpaque(false); row.setAlignmentX(Component.LEFT_ALIGNMENT); return row; }
+    private JLabel controlIconLabel(String type, String description) { JLabel label = new JLabel(new ControlIcon(type)); label.setToolTipText(description); label.getAccessibleContext().setAccessibleName(description); label.setHorizontalAlignment(SwingConstants.CENTER); return label; }
+    private void addMouseListenerToTree(Component component, MouseListener listener) { component.addMouseListener(listener); if (component instanceof Container container) for (Component child : container.getComponents()) addMouseListenerToTree(child, listener); }
 
     private JSlider colorSlider(int value) { JSlider slider = new JSlider(0, 255, value); slider.setToolTipText("RGB color channel"); slider.setFocusable(false); return slider; }
 
@@ -328,11 +465,11 @@ public class PhotoshopStudio extends JFrame {
 
     private Properties captureWorkspace() { Properties values = new Properties(); values.setProperty("windowWidth", getWidth() + ""); values.setProperty("windowHeight", getHeight() + ""); values.setProperty("windowX", getX() + ""); values.setProperty("windowY", getY() + ""); values.setProperty("zoom", canvas.getZoom() + ""); values.setProperty("brushSize", brushSize + ""); values.setProperty("red", brushColor.getRed() + ""); values.setProperty("green", brushColor.getGreen() + ""); values.setProperty("blue", brushColor.getBlue() + ""); values.setProperty("tool", tool.name()); values.setProperty("cropType", cropTypeSelector == null ? "0" : cropTypeSelector.getSelectedIndex() + ""); return values; }
     private void saveWorkspacePreferences() { Properties values = captureWorkspace(); for (String key : values.stringPropertyNames()) workspacePreferences.put(key, values.getProperty(key)); }
-    private void applyWorkspace(Properties values) { setSize(Integer.parseInt(values.getProperty("windowWidth", "1100")), Integer.parseInt(values.getProperty("windowHeight", "750"))); if (values.getProperty("windowX") != null) setLocation(Integer.parseInt(values.getProperty("windowX")), Integer.parseInt(values.getProperty("windowY", "0"))); brushSize = Integer.parseInt(values.getProperty("brushSize", "18")); if (brushSizeSlider != null) brushSizeSlider.setValue(brushSize); brushColor = new Color(Integer.parseInt(values.getProperty("red", "0")), Integer.parseInt(values.getProperty("green", "0")), Integer.parseInt(values.getProperty("blue", "0"))); syncControlValues(); double savedZoom = Double.parseDouble(values.getProperty("zoom", "1.0")); canvas.setZoom(savedZoom); if (zoomSlider != null) zoomSlider.setValue((int) Math.round(savedZoom * 100)); if (cropTypeSelector != null) cropTypeSelector.setSelectedIndex(Math.max(0, Math.min(cropTypeSelector.getItemCount() - 1, Integer.parseInt(values.getProperty("cropType", "0"))))); try { tool = Tool.valueOf(values.getProperty("tool", Tool.BRUSH.name())); } catch (IllegalArgumentException ignored) { tool = Tool.BRUSH; } updateToolCursor(); }
+    private void applyWorkspace(Properties values) { setSize(Integer.parseInt(values.getProperty("windowWidth", "1100")), Integer.parseInt(values.getProperty("windowHeight", "750"))); if (values.getProperty("windowX") != null) setLocation(Integer.parseInt(values.getProperty("windowX")), Integer.parseInt(values.getProperty("windowY", "0"))); brushSize = Integer.parseInt(values.getProperty("brushSize", "18")); if (brushSizeSlider != null) brushSizeSlider.setValue(brushSize); brushColor = new Color(Integer.parseInt(values.getProperty("red", "0")), Integer.parseInt(values.getProperty("green", "0")), Integer.parseInt(values.getProperty("blue", "0"))); syncControlValues(); double savedZoom = Double.parseDouble(values.getProperty("zoom", "1.0")); canvas.setZoom(savedZoom); if (cropTypeSelector != null) cropTypeSelector.setSelectedIndex(Math.max(0, Math.min(cropTypeSelector.getItemCount() - 1, Integer.parseInt(values.getProperty("cropType", "0"))))); try { tool = Tool.valueOf(values.getProperty("tool", Tool.BRUSH.name())); } catch (IllegalArgumentException ignored) { tool = Tool.BRUSH; } updateToolCursor(); }
     private void loadWorkspaceFromFile() { JFileChooser chooser = new JFileChooser(workspaceDirectory()); chooser.setDialogTitle("Load Workspace"); if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return; loadWorkspaceFile(chooser.getSelectedFile()); JOptionPane.showMessageDialog(this, "Workspace loaded.", "Workspace", JOptionPane.INFORMATION_MESSAGE); }
 
     private void resetWorkspace() {
-        try { workspacePreferences.clear(); } catch (java.util.prefs.BackingStoreException ignored) { } setSize(1100, 750); brushSize = 18; brushColor = Color.BLACK; canvas.setZoom(1.0); if (brushSizeSlider != null) brushSizeSlider.setValue(brushSize); if (zoomSlider != null) zoomSlider.setValue(100); if (cropTypeSelector != null) cropTypeSelector.setSelectedIndex(0); tool = Tool.BRUSH; syncControlValues(); updateToolCursor(); updateStatus("Workspace reset");
+        try { workspacePreferences.clear(); } catch (java.util.prefs.BackingStoreException ignored) { } setSize(1100, 750); brushSize = 18; brushColor = Color.BLACK; canvas.setZoom(1.0); if (brushSizeSlider != null) brushSizeSlider.setValue(brushSize); if (cropTypeSelector != null) cropTypeSelector.setSelectedIndex(0); tool = Tool.BRUSH; syncControlValues(); updateToolCursor(); updateStatus("Workspace reset");
     }
 
     private void showImageInformation() {
@@ -449,53 +586,7 @@ public class PhotoshopStudio extends JFrame {
         if (selected != null) { applyEffectToItem(selected, effect); return; }
         BufferedImage canvasBefore = copy(image), canvasAfter = filterCopy(image, effect); image = canvasAfter;
         undo.addEdit(new AbstractUndoableEdit() { @Override public void undo() { super.undo(); image = copy(canvasBefore); canvas.revalidate(); canvas.repaint(); } @Override public void redo() { super.redo(); image = copy(canvasAfter); canvas.revalidate(); canvas.repaint(); } });
-        canvas.revalidate(); canvas.repaint(); updateStatus("Effect applied to canvas"); if (effect == null) return;
-        if (effect.equals("autoEnhance") || effect.equals("smartSharpen") || effect.equals("reduceNoise") || effect.equals("clarity") || effect.equals("exposure") || effect.equals("highlights") || effect.equals("shadows") || effect.equals("gamma") || effect.equals("colorize") || effect.equals("pixelate") || effect.equals("solarize") || effect.equals("filmGrain") || effect.equals("glow") || effect.equals("duotone")) {
-            BufferedImage before = copy(image), after = filterCopy(image, effect); image = after;
-            undo.addEdit(new AbstractUndoableEdit() { @Override public void undo() { super.undo(); image = copy(before); canvas.revalidate(); canvas.repaint(); } @Override public void redo() { super.redo(); image = copy(after); canvas.revalidate(); canvas.repaint(); } });
-            canvas.revalidate(); canvas.repaint(); updateStatus("Quality effect applied"); return;
-        }
-        BufferedImage before = copy(image);
-        if (effect.equals("grayscale")) {
-            for (int y = 0; y < image.getHeight(); y++) for (int x = 0; x < image.getWidth(); x++) {
-                int argb = image.getRGB(x, y), a = (argb >>> 24) & 255;
-                int r = (argb >>> 16) & 255, g = (argb >>> 8) & 255, b = argb & 255;
-                int gray = (r * 30 + g * 59 + b * 11) / 100;
-                image.setRGB(x, y, (a << 24) | (gray << 16) | (gray << 8) | gray);
-            }
-        } else if (effect.equals("invert")) {
-            for (int y = 0; y < image.getHeight(); y++) for (int x = 0; x < image.getWidth(); x++) {
-                int argb = image.getRGB(x, y); image.setRGB(x, y, (argb & 0xff000000) | ((255 - ((argb >> 16) & 255)) << 16) | ((255 - ((argb >> 8) & 255)) << 8) | (255 - (argb & 255)));
-            }
-        } else if (effect.equals("bright")) {
-            for (int y = 0; y < image.getHeight(); y++) for (int x = 0; x < image.getWidth(); x++) {
-                int argb = image.getRGB(x, y), a = argb & 0xff000000;
-                int r = Math.min(255, ((argb >> 16) & 255) + 25), g = Math.min(255, ((argb >> 8) & 255) + 25), b = Math.min(255, (argb & 255) + 25);
-                image.setRGB(x, y, a | (r << 16) | (g << 8) | b);
-            }
-        } else if (effect.equals("sepia")) {
-            for (int y = 0; y < image.getHeight(); y++) for (int x = 0; x < image.getWidth(); x++) {
-                int argb = image.getRGB(x, y), a = argb & 0xff000000, r = (argb >> 16) & 255, g = (argb >> 8) & 255, b = argb & 255;
-                int nr = Math.min(255, (int) (r * .393 + g * .769 + b * .189)), ng = Math.min(255, (int) (r * .349 + g * .686 + b * .168)), nb = Math.min(255, (int) (r * .272 + g * .534 + b * .131)); image.setRGB(x, y, a | (nr << 16) | (ng << 8) | nb);
-            }
-        } else if (effect.equals("contrast")) {
-            double factor = 1.35;
-            for (int y = 0; y < image.getHeight(); y++) for (int x = 0; x < image.getWidth(); x++) { int argb = image.getRGB(x, y), a = argb & 0xff000000; int r = Math.max(0, Math.min(255, (int) (((argb >> 16 & 255) - 128) * factor + 128))), g = Math.max(0, Math.min(255, (int) (((argb >> 8 & 255) - 128) * factor + 128))), b = Math.max(0, Math.min(255, (int) (((argb & 255) - 128) * factor + 128))); image.setRGB(x, y, a | (r << 16) | (g << 8) | b); }
-        } else if (effect.equals("posterize") || effect.equals("threshold") || effect.equals("cool")) {
-            for (int y = 0; y < image.getHeight(); y++) for (int x = 0; x < image.getWidth(); x++) { int argb = image.getRGB(x, y), a = argb & 0xff000000, r = (argb >> 16) & 255, g = (argb >> 8) & 255, b = argb & 255; if (effect.equals("posterize")) { r = (r / 64) * 64; g = (g / 64) * 64; b = (b / 64) * 64; } else if (effect.equals("threshold")) { int gray = (r * 30 + g * 59 + b * 11) / 100; r = g = b = gray >= 128 ? 255 : 0; } else { b = Math.min(255, b + 35); r = Math.max(0, r - 10); } image.setRGB(x, y, a | (r << 16) | (g << 8) | b); }
-        } else if (effect.equals("blur")) {
-            float[] kernel = {1 / 9f, 1 / 9f, 1 / 9f, 1 / 9f, 1 / 9f, 1 / 9f, 1 / 9f, 1 / 9f, 1 / 9f};
-            java.awt.image.ConvolveOp op = new java.awt.image.ConvolveOp(new java.awt.image.Kernel(3, 3, kernel), java.awt.image.ConvolveOp.EDGE_NO_OP, null);
-            BufferedImage blurred = op.filter(image, null); image = blurred;
-        } else if (effect.equals("sharpen") || effect.equals("edge") || effect.equals("emboss")) {
-            float[] kernel = effect.equals("sharpen") ? new float[]{0, -1, 0, -1, 5, -1, 0, -1, 0} : effect.equals("edge") ? new float[]{-1, -1, -1, -1, 8, -1, -1, -1, -1} : new float[]{-2, -1, 0, -1, 1, 1, 0, 1, 2};
-            java.awt.image.ConvolveOp op = new java.awt.image.ConvolveOp(new java.awt.image.Kernel(3, 3, kernel), java.awt.image.ConvolveOp.EDGE_NO_OP, null); image = op.filter(image, null);
-        }
-        BufferedImage after = copy(image); undo.addEdit(new AbstractUndoableEdit() {
-            @Override public void undo() { super.undo(); image = copy(before); canvas.revalidate(); canvas.repaint(); }
-            @Override public void redo() { super.redo(); image = copy(after); canvas.revalidate(); canvas.repaint(); }
-        });
-        canvas.revalidate(); canvas.repaint();
+        canvas.revalidate(); canvas.repaint(); updateStatus("Effect applied to canvas");
     }
 
     private void applyEffectToItem(MovableItem item, String effect) {
@@ -527,39 +618,71 @@ public class PhotoshopStudio extends JFrame {
     }
 
     private BufferedImage filterCopy(BufferedImage source, String effect) {
+        int width = source.getWidth(), height = source.getHeight();
         BufferedImage result = copy(source);
-        if (effect.equals("blur") || effect.equals("sharpen") || effect.equals("edge") || effect.equals("emboss") || effect.equals("smartSharpen") || effect.equals("reduceNoise") || effect.equals("clarity")) {
-            float[] kernel = effect.equals("blur") || effect.equals("reduceNoise") ? new float[]{1 / 9f, 1 / 9f, 1 / 9f, 1 / 9f, 1 / 9f, 1 / 9f, 1 / 9f, 1 / 9f, 1 / 9f} : effect.equals("sharpen") ? new float[]{0, -1, 0, -1, 5, -1, 0, -1, 0} : effect.equals("smartSharpen") ? new float[]{-1, -1, -1, -1, 9, -1, -1, -1, -1} : effect.equals("clarity") ? new float[]{-1, -1, -1, -1, 13, -1, -1, -1, -1} : effect.equals("edge") ? new float[]{-1, -1, -1, -1, 8, -1, -1, -1, -1} : new float[]{-2, -1, 0, -1, 1, 1, 0, 1, 2};
-            return new java.awt.image.ConvolveOp(new java.awt.image.Kernel(3, 3, kernel), java.awt.image.ConvolveOp.EDGE_NO_OP, null).filter(result, null);
+
+        // Spatial filters are deliberately separate: blur smooths all pixels,
+        // denoise removes isolated outliers, while the sharpening filters target edges.
+        if (effect.equals("blur")) return convolve(source, new float[]{1,2,1,2,4,2,1,2,1}, 16f);
+        if (effect.equals("reduceNoise")) return medianFilter(source);
+        if (effect.equals("sharpen")) return convolve(source, new float[]{0,-1,0,-1,5,-1,0,-1,0}, 1f);
+        if (effect.equals("edge")) return convolve(source, new float[]{-1,-1,-1,-1,8,-1,-1,-1,-1}, 1f);
+        if (effect.equals("emboss")) return convolve(source, new float[]{-2,-1,0,-1,1,1,0,1,2}, 1f);
+        if (effect.equals("pixelate")) {
+            int block = 10;
+            for (int by=0; by<height; by+=block) for (int bx=0; bx<width; bx+=block) {
+                long rr=0,gg=0,bb=0; int count=0;
+                for (int y=by; y<Math.min(by+block,height); y++) for (int x=bx; x<Math.min(bx+block,width); x++) { int p=source.getRGB(x,y); rr+=(p>>>16)&255; gg+=(p>>>8)&255; bb+=p&255; count++; }
+                int alpha=source.getRGB(bx,by)&0xff000000, color=alpha|((int)(rr/count)<<16)|((int)(gg/count)<<8)|(int)(bb/count);
+                for (int y=by; y<Math.min(by+block,height); y++) for (int x=bx; x<Math.min(bx+block,width); x++) result.setRGB(x,y,color);
+            }
+            return result;
         }
-        for (int y = 0; y < result.getHeight(); y++) for (int x = 0; x < result.getWidth(); x++) {
-            int argb = result.getRGB(x, y), a = argb & 0xff000000, r = (argb >> 16) & 255, g = (argb >> 8) & 255, b = argb & 255;
-            if (effect.equals("grayscale")) { int gray = (r * 30 + g * 59 + b * 11) / 100; r = g = b = gray; }
-            else if (effect.equals("invert")) { r = 255 - r; g = 255 - g; b = 255 - b; }
-            else if (effect.equals("bright")) { r = Math.min(255, r + 25); g = Math.min(255, g + 25); b = Math.min(255, b + 25); }
-            else if (effect.equals("contrast")) { double f = 1.35; r = clamp((int) ((r - 128) * f + 128)); g = clamp((int) ((g - 128) * f + 128)); b = clamp((int) ((b - 128) * f + 128)); }
-            else if (effect.equals("sepia")) { int nr = Math.min(255, (int) (r * .393 + g * .769 + b * .189)), ng = Math.min(255, (int) (r * .349 + g * .686 + b * .168)), nb = Math.min(255, (int) (r * .272 + g * .534 + b * .131)); r = nr; g = ng; b = nb; }
-            else if (effect.equals("posterize")) { r = (r / 64) * 64; g = (g / 64) * 64; b = (b / 64) * 64; }
-            else if (effect.equals("threshold")) { int gray = (r * 30 + g * 59 + b * 11) / 100; r = g = b = gray >= 128 ? 255 : 0; }
-            else if (effect.equals("cool")) { b = Math.min(255, b + 35); r = Math.max(0, r - 10); }
-            else if (effect.equals("warm")) { r = Math.min(255, r + 30); b = Math.max(0, b - 20); }
-            else if (effect.equals("saturation")) { int avg = (r + g + b) / 3; r = clamp((int) (avg + (r - avg) * 1.4)); g = clamp((int) (avg + (g - avg) * 1.4)); b = clamp((int) (avg + (b - avg) * 1.4)); }
-            else if (effect.equals("vignette")) { double dx = (x - result.getWidth() / 2.0) / (result.getWidth() / 2.0), dy = (y - result.getHeight() / 2.0) / (result.getHeight() / 2.0); double factor = Math.max(.25, 1.0 - (dx * dx + dy * dy) * .35); r = clamp((int) (r * factor)); g = clamp((int) (g * factor)); b = clamp((int) (b * factor)); }
-            else if (effect.equals("autoEnhance")) { double contrast = 1.15; int avg = (r + g + b) / 3; r = clamp((int) (((r - 128) * contrast + 128) + (r - avg) * .12 + 5)); g = clamp((int) (((g - 128) * contrast + 128) + (g - avg) * .12 + 5)); b = clamp((int) (((b - 128) * contrast + 128) + (b - avg) * .12 + 5)); }
-            else if (effect.equals("exposure")) { r = clamp(r + 35); g = clamp(g + 35); b = clamp(b + 35); }
-            else if (effect.equals("highlights")) { r = clamp(r > 150 ? r + 25 : r); g = clamp(g > 150 ? g + 25 : g); b = clamp(b > 150 ? b + 25 : b); }
-            else if (effect.equals("shadows")) { r = clamp(r < 110 ? r + 35 : r); g = clamp(g < 110 ? g + 35 : g); b = clamp(b < 110 ? b + 35 : b); }
-            else if (effect.equals("gamma")) { r = clamp((int) (255 * Math.pow(r / 255.0, .82))); g = clamp((int) (255 * Math.pow(g / 255.0, .82))); b = clamp((int) (255 * Math.pow(b / 255.0, .82))); }
-            else if (effect.equals("colorize")) { int gray = (r * 30 + g * 59 + b * 11) / 100; r = clamp(gray + 35); g = clamp(gray + 10); b = clamp(gray - 25); }
-            else if (effect.equals("pixelate")) { r = (r / 32) * 32; g = (g / 32) * 32; b = (b / 32) * 32; }
-            else if (effect.equals("solarize")) { r = r > 128 ? 255 - r : r; g = g > 128 ? 255 - g : g; b = b > 128 ? 255 - b : b; }
-            else if (effect.equals("filmGrain")) { int grain = ((x * 17 + y * 31) % 17) - 8; r = clamp(r + grain); g = clamp(g + grain); b = clamp(b + grain); }
-            else if (effect.equals("glow")) { r = clamp(r + 18); g = clamp(g + 18); b = clamp(b + 18); }
-            else if (effect.equals("duotone")) { int gray = (r * 30 + g * 59 + b * 11) / 100; r = clamp(gray + 20); g = clamp(gray); b = clamp(gray + 55); }
-            result.setRGB(x, y, a | (r << 16) | (g << 8) | b);
+        if (effect.equals("glow")) {
+            BufferedImage blurred=convolve(source,new float[]{1,2,1,2,4,2,1,2,1},16f);
+            for(int y=0;y<height;y++) for(int x=0;x<width;x++) { int p=source.getRGB(x,y), q=blurred.getRGB(x,y); int lum=luminance(p); double amount=Math.max(0,(lum-105)/150.0)*.65; int r=screen((p>>>16)&255,(q>>>16)&255,amount),g=screen((p>>>8)&255,(q>>>8)&255,amount),b=screen(p&255,q&255,amount); result.setRGB(x,y,(p&0xff000000)|(r<<16)|(g<<8)|b); }
+            return result;
+        }
+
+        int minLum=255,maxLum=0;
+        if(effect.equals("autoEnhance")) for(int y=0;y<height;y++) for(int x=0;x<width;x++){int l=luminance(source.getRGB(x,y)); minLum=Math.min(minLum,l); maxLum=Math.max(maxLum,l);}
+        for (int y=0; y<height; y++) for (int x=0; x<width; x++) {
+            int argb=source.getRGB(x,y), a=argb&0xff000000, r=(argb>>>16)&255, g=(argb>>>8)&255, b=argb&255, lum=luminance(argb);
+            switch(effect) {
+                case "grayscale" -> r=g=b=lum;
+                case "invert" -> {r=255-r;g=255-g;b=255-b;}
+                case "bright" -> {r=clamp(r+25);g=clamp(g+25);b=clamp(b+25);}
+                case "contrast" -> {r=clamp((int)((r-128)*1.35+128));g=clamp((int)((g-128)*1.35+128));b=clamp((int)((b-128)*1.35+128));}
+                case "sepia" -> {int nr=clamp((int)(r*.393+g*.769+b*.189)),ng=clamp((int)(r*.349+g*.686+b*.168)),nb=clamp((int)(r*.272+g*.534+b*.131));r=nr;g=ng;b=nb;}
+                case "posterize" -> {r=(r/64)*64;g=(g/64)*64;b=(b/64)*64;}
+                case "threshold" -> r=g=b=lum>=128?255:0;
+                case "cool" -> {r=clamp((int)(r*.92));g=clamp((int)(g*1.01));b=clamp((int)(b*1.16));}
+                case "warm" -> {r=clamp((int)(r*1.14));g=clamp((int)(g*1.02));b=clamp((int)(b*.88));}
+                case "saturation" -> {int avg=(r+g+b)/3;r=clamp((int)(avg+(r-avg)*1.4));g=clamp((int)(avg+(g-avg)*1.4));b=clamp((int)(avg+(b-avg)*1.4));}
+                case "vignette" -> {double dx=(x-(width-1)/2.0)/(width/2.0),dy=(y-(height-1)/2.0)/(height/2.0),f=Math.max(.18,1-.58*(dx*dx+dy*dy));r=clamp((int)(r*f));g=clamp((int)(g*f));b=clamp((int)(b*f));}
+                case "autoEnhance" -> {int stretched=maxLum==minLum?lum:clamp((lum-minLum)*255/(maxLum-minLum));double f=lum==0?1:stretched/(double)lum;r=clamp((int)(r*f));g=clamp((int)(g*f));b=clamp((int)(b*f));}
+                case "exposure" -> {r=clamp((int)(r*1.55));g=clamp((int)(g*1.55));b=clamp((int)(b*1.55));}
+                case "highlights" -> {double t=Math.max(0,(lum-112)/143.0),f=1+.34*t;r=clamp((int)(lum+(r-lum)*f+32*t));g=clamp((int)(lum+(g-lum)*f+32*t));b=clamp((int)(lum+(b-lum)*f+32*t));}
+                case "shadows" -> {double t=Math.max(0,(145-lum)/145.0),lift=78*t*t;r=clamp((int)(r+lift));g=clamp((int)(g+lift));b=clamp((int)(b+lift));}
+                case "gamma" -> {r=clamp((int)(255*Math.pow(r/255.0,1.65)));g=clamp((int)(255*Math.pow(g/255.0,1.65)));b=clamp((int)(255*Math.pow(b/255.0,1.65)));}
+                // Colorize lays a cyan tint over existing color; duotone remaps luminance to two inks.
+                case "colorize" -> {r=clamp((int)(r*.68+lum*.08));g=clamp((int)(g*.68+lum*.18+30));b=clamp((int)(b*.68+lum*.32+45));}
+                case "duotone" -> {double t=lum/255.0;r=clamp((int)(18+237*t));g=clamp((int)(24+178*t));b=clamp((int)(62+105*t));}
+                case "solarize" -> {r=r>128?255-r:r;g=g>128?255-g:g;b=b>128?255-b:b;}
+                case "filmGrain" -> {int hash=x*374761393+y*668265263;hash=(hash^(hash>>>13))*1274126177;int grain=((hash^(hash>>>16))&31)-15;r=clamp(r+grain);g=clamp(g+grain);b=clamp(b+grain);}
+                case "smartSharpen" -> {int neighborhood=luminance(source.getRGB(Math.max(0,x-1),y))+luminance(source.getRGB(Math.min(width-1,x+1),y))+luminance(source.getRGB(x,Math.max(0,y-1)))+luminance(source.getRGB(x,Math.min(height-1,y+1)));int detail=lum*4-neighborhood;if(Math.abs(detail)>18){r=clamp(r+detail/2);g=clamp(g+detail/2);b=clamp(b+detail/2);}}
+                case "clarity" -> {int neighbors=luminance(source.getRGB(Math.max(0,x-1),y))+luminance(source.getRGB(Math.min(width-1,x+1),y))+luminance(source.getRGB(x,Math.max(0,y-1)))+luminance(source.getRGB(x,Math.min(height-1,y+1)));int local=neighbors/4,delta=lum-local;r=clamp(r+delta/2);g=clamp(g+delta/2);b=clamp(b+delta/2);}
+                default -> { }
+            }
+            result.setRGB(x,y,a|(r<<16)|(g<<8)|b);
         }
         return result;
     }
+
+    private int luminance(int argb) { return (((argb>>>16)&255)*30+((argb>>>8)&255)*59+(argb&255)*11)/100; }
+    private int screen(int base,int glow,double amount) { int value=255-(int)((255-base)*(255-glow)/255.0); return clamp((int)(base+(value-base)*amount)); }
+    private BufferedImage convolve(BufferedImage source,float[] kernel,float divisor) { BufferedImage result=copy(source); for(int y=1;y<source.getHeight()-1;y++)for(int x=1;x<source.getWidth()-1;x++){double r=0,g=0,b=0;int k=0;for(int dy=-1;dy<=1;dy++)for(int dx=-1;dx<=1;dx++){int p=source.getRGB(x+dx,y+dy);float weight=kernel[k++]/divisor;r+=((p>>>16)&255)*weight;g+=((p>>>8)&255)*weight;b+=(p&255)*weight;}int alpha=source.getRGB(x,y)&0xff000000;result.setRGB(x,y,alpha|(clamp((int)Math.round(r))<<16)|(clamp((int)Math.round(g))<<8)|clamp((int)Math.round(b)));}return result; }
+    private BufferedImage medianFilter(BufferedImage source) { BufferedImage result=copy(source);for(int y=1;y<source.getHeight()-1;y++)for(int x=1;x<source.getWidth()-1;x++){int[] rr=new int[9],gg=new int[9],bb=new int[9];int i=0;for(int dy=-1;dy<=1;dy++)for(int dx=-1;dx<=1;dx++){int p=source.getRGB(x+dx,y+dy);rr[i]=(p>>>16)&255;gg[i]=(p>>>8)&255;bb[i++]=p&255;}java.util.Arrays.sort(rr);java.util.Arrays.sort(gg);java.util.Arrays.sort(bb);result.setRGB(x,y,(source.getRGB(x,y)&0xff000000)|(rr[4]<<16)|(gg[4]<<8)|bb[4]);}return result; }
 
     private int clamp(int value) { return Math.max(0, Math.min(255, value)); }
 
@@ -705,6 +828,14 @@ public class PhotoshopStudio extends JFrame {
 
         CanvasPanel() {
             setBackground(new Color(55, 55, 60));
+            addMouseWheelListener(e -> {
+                // The pointer location is the zoom anchor; no modifier key or slider is needed.
+                double rotation = e.getPreciseWheelRotation();
+                if (rotation == 0) return;
+                double nextZoom = zoom * Math.pow(1.12, -rotation);
+                zoomAt(nextZoom, e.getPoint());
+                e.consume();
+            });
             setTransferHandler(new TransferHandler() {
                 @Override public boolean canImport(TransferSupport support) { return support.isDataFlavorSupported(DataFlavor.javaFileListFlavor); }
                 @Override public boolean importData(TransferSupport support) {
@@ -788,7 +919,15 @@ public class PhotoshopStudio extends JFrame {
             Point point = imagePoint(event.getX(), event.getY());
             MovableItem item = findItem(point.x, point.y);
             JPopupMenu menu = new JPopupMenu();
-            if (item != null) {
+            if (tool == Tool.SELECT) {
+                JMenuItem selectAll = new JMenuItem("Select All"); selectAll.addActionListener(e -> { selection = new Rectangle(0, 0, image.getWidth(), image.getHeight()); cropStartX = cropStartY = 0; cropEndX = image.getWidth(); cropEndY = image.getHeight(); repaint(); updateStatus("Entire canvas selected: " + image.getWidth() + " × " + image.getHeight() + " px"); });
+                JMenuItem deselect = new JMenuItem("Deselect"); deselect.setEnabled(selection != null); deselect.addActionListener(e -> { selection = null; repaint(); updateStatus("Selection cleared"); });
+                MovableItem cropTarget = item != null ? item : layerList.getSelectedValue();
+                JMenuItem cropToSelection = new JMenuItem("Crop Selected Layer to Selection"); cropToSelection.setEnabled(selection != null && selection.width > 1 && selection.height > 1 && cropTarget != null); cropToSelection.addActionListener(e -> { if (selection == null || cropTarget == null) return; int sx=selection.x, sy=selection.y, sw=selection.width, sh=selection.height; Rectangle overlap=selection.intersection(new Rectangle(cropTarget.x,cropTarget.y,cropTarget.image.getWidth(),cropTarget.image.getHeight())); if(overlap.width<2||overlap.height<2)return; layerList.setSelectedValue(cropTarget,true); cropItemSelection(cropTarget,sx,sy,sw,sh); selection=null; repaint(); updateStatus("Layer cropped to selection; canvas unchanged"); });
+                JMenuItem selectLayer = new JMenuItem(item == null ? "Select Layer Under Pointer" : "Select Layer: " + item.name); selectLayer.setEnabled(item != null); selectLayer.addActionListener(e -> { if (item != null) { layerList.setSelectedValue(item, true); selectedItem = item; updateLayerProperties(); repaint(); updateStatus("Selected " + item.name); } });
+                menu.add(selectAll); menu.add(deselect); menu.add(cropToSelection); menu.addSeparator(); menu.add(selectLayer);
+            } else if (item != null) {
+                JMenuItem select = new JMenuItem("Select"); select.addActionListener(e -> { layerList.setSelectedValue(item, true); selectedItem = item; tool = Tool.MOVE; updateToolCursor(); updateLayerProperties(); updateStatus("Selected " + item.name); repaint(); });
                 JMenuItem move = new JMenuItem("Move Object"); move.addActionListener(e -> { tool = Tool.MOVE; updateToolCursor(); updateStatus("Drag object to move it"); });
                 JMenuItem erase = new JMenuItem("Erase Object Pixels"); erase.addActionListener(e -> { tool = Tool.ERASER; updateToolCursor(); updateStatus("Erase pixels from selected object"); });
                 JMenuItem resize = new JMenuItem("Resize..."); resize.addActionListener(e -> resizeItem(item));
@@ -800,7 +939,7 @@ public class PhotoshopStudio extends JFrame {
                 JMenuItem front = new JMenuItem("Bring to Front"); front.addActionListener(e -> { movableItems.remove(item); movableItems.add(item); refreshLayers(); repaint(); });
                 JMenuItem back = new JMenuItem("Send to Back"); back.addActionListener(e -> { movableItems.remove(item); movableItems.add(0, item); refreshLayers(); repaint(); });
                 JMenuItem delete = new JMenuItem("Delete Object"); delete.addActionListener(e -> { unregisterItem(item); repaint(); updateStatus("Object deleted"); });
-                menu.add(move); menu.add(erase); menu.add(resize); menu.add(freeRotate); menu.add(rotate); menu.add(flipH); menu.add(flipV); menu.addSeparator(); menu.add(solo); menu.addSeparator(); menu.add(front); menu.add(back); menu.addSeparator(); menu.add(delete);
+                menu.add(select); menu.add(move); menu.add(erase); menu.add(resize); menu.add(freeRotate); menu.add(rotate); menu.add(flipH); menu.add(flipV); menu.addSeparator(); menu.add(solo); menu.addSeparator(); menu.add(front); menu.add(back); menu.addSeparator(); menu.add(delete);
             } else {
                 JMenuItem overlay = new JMenuItem("Place Image Overlay..."); overlay.addActionListener(e -> placeOverlay());
                 JMenuItem text = new JMenuItem("Add Text Here"); text.addActionListener(e -> addTextAt(event.getX(), event.getY()));
@@ -813,7 +952,22 @@ public class PhotoshopStudio extends JFrame {
             menu.add(undoItem); menu.add(redoItem); menu.show(this, event.getX(), event.getY());
         }
 
-        void setZoom(double zoom) { this.zoom = zoom; revalidate(); repaint(); }
+        void setZoom(double zoom) { this.zoom = Math.max(0.1, Math.min(8.0, zoom)); if (zoomValueLabel != null) zoomValueLabel.setText(Math.round(this.zoom * 100) + "%"); revalidate(); repaint(); }
+        private void zoomAt(double requestedZoom, Point canvasPoint) {
+            double oldZoom = zoom;
+            int oldImageX = Math.max(20, (getWidth() - (int)(image.getWidth() * oldZoom)) / 2);
+            int oldImageY = Math.max(20, (getHeight() - (int)(image.getHeight() * oldZoom)) / 2);
+            double imageX = (canvasPoint.x - oldImageX) / oldZoom, imageY = (canvasPoint.y - oldImageY) / oldZoom;
+            JViewport viewport = canvasScroll.getViewport();
+            Point anchorInViewport = SwingUtilities.convertPoint(this, canvasPoint, viewport);
+            setZoom(requestedZoom);
+            SwingUtilities.invokeLater(() -> {
+                int imageXOnCanvas = Math.max(20, (getWidth() - (int)(image.getWidth() * zoom)) / 2) + (int)Math.round(imageX * zoom);
+                int imageYOnCanvas = Math.max(20, (getHeight() - (int)(image.getHeight() * zoom)) / 2) + (int)Math.round(imageY * zoom);
+                int maxX = Math.max(0, getWidth() - viewport.getWidth()), maxY = Math.max(0, getHeight() - viewport.getHeight());
+                viewport.setViewPosition(new Point(Math.max(0, Math.min(maxX, imageXOnCanvas - anchorInViewport.x)), Math.max(0, Math.min(maxY, imageYOnCanvas - anchorInViewport.y))));
+            });
+        }
         double getZoom() { return zoom; }
 
         @Override public Dimension getPreferredSize() {
@@ -828,6 +982,7 @@ public class PhotoshopStudio extends JFrame {
             if (x < 0 || y < 0 || x >= image.getWidth() || y >= image.getHeight()) return;
             if (!hasLastPoint) { lastX = x; lastY = y; hasLastPoint = true; }
             Graphics2D g = image.createGraphics();
+            if (selection != null) g.clip(selection);
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g.setStroke(new BasicStroke(brushSize, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             if (eraser) g.setComposite(AlphaComposite.Clear); else g.setColor(brushColor);
@@ -879,7 +1034,9 @@ public class PhotoshopStudio extends JFrame {
         private void editItemAt(int imageX, int imageY) {
             if (editingItem == null) return;
             int localX = imageX - editingItem.x, localY = imageY - editingItem.y;
-            Graphics2D g = editingItem.image.createGraphics(); g.setStroke(new BasicStroke(brushSize, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            Graphics2D g = editingItem.image.createGraphics();
+            if (selection != null) g.clip(new Rectangle(selection.x - editingItem.x, selection.y - editingItem.y, selection.width, selection.height));
+            g.setStroke(new BasicStroke(brushSize, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             if (eraser) g.setComposite(AlphaComposite.Clear); else g.setColor(brushColor);
             g.drawLine(itemLastX, itemLastY, localX, localY); int radius = brushSize / 2; if (eraser) g.setComposite(AlphaComposite.Clear); g.fillOval(localX - radius, localY - radius, brushSize, brushSize); g.dispose();
             itemLastX = localX; itemLastY = localY; repaint();
@@ -904,10 +1061,11 @@ public class PhotoshopStudio extends JFrame {
 
         private void fillAt(int x, int y) {
             if (x < 0 || y < 0 || x >= image.getWidth() || y >= image.getHeight()) return;
+            if (selection != null && !selection.contains(x, y)) return;
             MovableItem selected = layerList.getSelectedValue(); BufferedImage targetImage = selected != null && selected.contains(x, y) ? selected.image : image; int ox = selected != null && targetImage == selected.image ? selected.x : 0, oy = selected != null && targetImage == selected.image ? selected.y : 0; int localX = x - ox, localY = y - oy;
             BufferedImage before = copy(targetImage); int target = targetImage.getRGB(localX, localY), replacement = brushColor.getRGB(); if (target == replacement) return;
             java.util.ArrayDeque<Point> queue = new java.util.ArrayDeque<>(); queue.add(new Point(localX, localY)); boolean[][] seen = new boolean[targetImage.getHeight()][targetImage.getWidth()];
-            while (!queue.isEmpty()) { Point p = queue.remove(); if (p.x < 0 || p.y < 0 || p.x >= targetImage.getWidth() || p.y >= targetImage.getHeight() || seen[p.y][p.x] || targetImage.getRGB(p.x, p.y) != target) continue; seen[p.y][p.x] = true; targetImage.setRGB(p.x, p.y, replacement); queue.add(new Point(p.x + 1, p.y)); queue.add(new Point(p.x - 1, p.y)); queue.add(new Point(p.x, p.y + 1)); queue.add(new Point(p.x, p.y - 1)); }
+            while (!queue.isEmpty()) { Point p = queue.remove(); int canvasX = p.x + ox, canvasY = p.y + oy; if (p.x < 0 || p.y < 0 || p.x >= targetImage.getWidth() || p.y >= targetImage.getHeight() || (selection != null && !selection.contains(canvasX, canvasY)) || seen[p.y][p.x] || targetImage.getRGB(p.x, p.y) != target) continue; seen[p.y][p.x] = true; targetImage.setRGB(p.x, p.y, replacement); queue.add(new Point(p.x + 1, p.y)); queue.add(new Point(p.x - 1, p.y)); queue.add(new Point(p.x, p.y + 1)); queue.add(new Point(p.x, p.y - 1)); }
             if (targetImage == image) addImageEdit(before, copy(image)); else addItemImageEdit(selected, before, copy(selected.image)); repaint();
         }
 
@@ -1009,7 +1167,7 @@ public class PhotoshopStudio extends JFrame {
                 int handle = 8; g.fillRect(sx - handle / 2, sy - handle / 2, handle, handle); g.fillRect(sx + sw - handle / 2, sy - handle / 2, handle, handle); g.fillRect(sx - handle / 2, sy + sh - handle / 2, handle, handle); g.fillRect(sx + sw - handle / 2, sy + sh - handle / 2, handle, handle);
                 String dimensions = Math.abs(cropEndX - cropStartX) + " × " + Math.abs(cropEndY - cropStartY) + " px"; g.setFont(g.getFont().deriveFont(Font.BOLD, 12f)); FontMetrics fm = g.getFontMetrics(); int labelWidth = fm.stringWidth(dimensions) + 12, labelX = Math.max(x, Math.min(sx, x + width - labelWidth)); int labelY = sy > y + 24 ? sy - 8 : Math.min(y + height - 4, sy + sh + 18); g.setColor(new Color(35, 35, 40, 220)); g.fillRoundRect(labelX, labelY - fm.getAscent(), labelWidth, fm.getHeight(), 6, 6); g.setColor(Color.WHITE); g.drawString(dimensions, labelX + 6, labelY); g.dispose();
             }
-            if (selection != null && selection.width > 0 && selection.height > 0) { Graphics2D g = (Graphics2D) graphics.create(); g.setColor(Color.WHITE); g.setStroke(new BasicStroke(1)); g.drawRect(x + (int) (selection.x * zoom), y + (int) (selection.y * zoom), (int) (selection.width * zoom), (int) (selection.height * zoom)); g.dispose(); }
+            if (selection != null && selection.width > 0 && selection.height > 0) { Graphics2D g = (Graphics2D) graphics.create(); int sx=x+(int)(selection.x*zoom), sy=y+(int)(selection.y*zoom), sw=(int)(selection.width*zoom), sh=(int)(selection.height*zoom); g.setColor(new Color(0,0,0,210)); g.setStroke(new BasicStroke(3)); g.drawRect(sx,sy,sw,sh); g.setColor(Color.WHITE); g.setStroke(new BasicStroke(1.5f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10, new float[]{5,4}, 0)); g.drawRect(sx,sy,sw,sh); g.dispose(); }
             if (tool == Tool.SHAPE && drawing) {
                 int sx = x + (int) (Math.min(shapeStartX, shapeEndX) * zoom), sy = y + (int) (Math.min(shapeStartY, shapeEndY) * zoom);
                 int sw = (int) (Math.abs(shapeEndX - shapeStartX) * zoom), sh = (int) (Math.abs(shapeEndY - shapeStartY) * zoom);
@@ -1021,6 +1179,24 @@ public class PhotoshopStudio extends JFrame {
         private void drawRulers(Graphics2D graphics, int imageX, int imageY, int imageWidth, int imageHeight) {
             Graphics2D ruler = (Graphics2D) graphics.create(); Color background = new Color(232, 234, 239), tick = new Color(100, 105, 115); ruler.setColor(background); ruler.fillRect(imageX, imageY - 20, imageWidth, 20); ruler.fillRect(imageX - 20, imageY, 20, imageHeight); ruler.setColor(new Color(185, 190, 198)); ruler.drawLine(imageX, imageY - 1, imageX + imageWidth, imageY - 1); ruler.drawLine(imageX - 1, imageY, imageX - 1, imageY + imageHeight);
             ruler.setColor(tick); ruler.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 9)); int step = 50; for (int value = 0; value <= image.getWidth(); value += step) { int px = imageX + (int) (value * zoom); ruler.drawLine(px, imageY - 7, px, imageY); if (value % 100 == 0) ruler.drawString(String.valueOf(value), px + 2, imageY - 9); } for (int value = 0; value <= image.getHeight(); value += step) { int py = imageY + (int) (value * zoom); ruler.drawLine(imageX - 7, py, imageX, py); if (value % 100 == 0) ruler.drawString(String.valueOf(value), imageX - 19, py - 2); } ruler.dispose();
+        }
+    }
+
+    private static final class ControlIcon implements Icon {
+        private final String type;
+        ControlIcon(String type) { this.type = type; }
+        @Override public int getIconWidth() { return 16; }
+        @Override public int getIconHeight() { return 16; }
+        @Override public void paintIcon(Component component, Graphics graphics, int x, int y) {
+            Graphics2D g = (Graphics2D) graphics.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            if (type.equals("red")) { g.setColor(new Color(220, 55, 60)); g.fillOval(x+3,y+3,10,10); g.setColor(new Color(125,30,35)); g.drawOval(x+3,y+3,10,10); }
+            else if (type.equals("green")) { g.setColor(new Color(45,165,85)); g.fillOval(x+3,y+3,10,10); g.setColor(new Color(20,100,50)); g.drawOval(x+3,y+3,10,10); }
+            else if (type.equals("blue")) { g.setColor(new Color(55,115,220)); g.fillOval(x+3,y+3,10,10); g.setColor(new Color(30,65,135)); g.drawOval(x+3,y+3,10,10); }
+            else if (type.equals("brightness")) { g.setColor(new Color(225,160,35)); g.setStroke(new BasicStroke(1.5f)); g.drawOval(x+4,y+4,8,8); g.drawLine(x+8,y,x+8,y+3); g.drawLine(x+8,y+13,x+8,y+16); g.drawLine(x,y+8,x+3,y+8); g.drawLine(x+13,y+8,x+16,y+8); g.drawLine(x+2,y+2,x+4,y+4); g.drawLine(x+12,y+12,x+14,y+14); g.drawLine(x+12,y+4,x+14,y+2); g.drawLine(x+2,y+14,x+4,y+12); g.fillOval(x+6,y+6,4,4); }
+            else if (type.equals("contrast")) { g.setColor(Color.WHITE); g.fillOval(x+2,y+2,12,12); g.setColor(new Color(65,75,95)); g.fillArc(x+2,y+2,12,12,90,180); g.setColor(new Color(55,60,70)); g.drawOval(x+2,y+2,12,12); }
+            else if (type.equals("saturation")) { g.setColor(new Color(225,65,70)); g.fillOval(x+1,y+5,8,8); g.setColor(new Color(45,165,90)); g.fillOval(x+5,y+2,8,8); g.setColor(new Color(55,115,220)); g.fillOval(x+8,y+6,8,8); }
+            g.dispose();
         }
     }
 
