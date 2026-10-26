@@ -12,7 +12,7 @@ Photoshop Studio is a Java Swing desktop image editor built as a Maven project f
 - Drag and drop images from File Explorer onto the canvas
 - Place image overlays as independent layers
 - Merge visible layers into the canvas
-- Zoom from 25% to 200% and fit the image to the workspace
+- Zoom from 10% to 800% with the mouse wheel, centered at the pointer, or use the footer zoom controls and Fit
 - Pixel rulers around the canvas
 
 ### Tools
@@ -56,6 +56,10 @@ Effects can be applied to the full canvas or to the selected layer, and they sup
 - Java 17 or newer
 - Apache Maven
 - NetBeans is recommended for editing and running the project
+
+## Installation (Windows)
+
+Download the [Photoshop Studio Windows app bundle](downloads/PhotoshopStudio-1.0.0-windows-x64.zip) and extract the ZIP. Open the extracted `PhotoshopStudio` folder and run `PhotoshopStudio.exe`. The portable bundle includes its Java runtime, so a separate JDK installation is not needed. Keep the extracted app folder together when moving or sharing it.
 
 ## Build
 
