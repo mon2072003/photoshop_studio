@@ -18,15 +18,18 @@ Photoshop Studio is a Java Swing desktop image editor built as a Maven project f
 ### Tools
 
 - Pointer tool for selecting and moving layers
-- Brush and eraser tools
+- Brush and eraser tools with a style dropdown beside the Brush button: round, soft, square, marker, spray, chalk, calligraphy, and dotted styles
 - Text tool with editable font family, style, size, color, border, and shadow
-- Shape tool with rectangles, ellipses, lines, polygons, stars, arrows, diamonds, crosses, and rounded rectangles
+- Shape tool with an icon-only picker for rectangles, rounded rectangles, ellipses, lines, arrows, triangles, diamonds, pentagons, hexagons, octagons, stars, hearts, clouds, lightning, trapezoids, parallelograms, chevrons, plus/cross marks, speech bubbles, cylinders, arcs, and pies
 - Selection tool
 - Color Picker with a live magnifying lens and RGB readout
 - Fill tool
 - Gradient tool
 - Crop tool with free, square, 4:3, 16:9, 3:2, circle, scrapbook, and perspective modes
 - Interactive Rotate tool
+- Online chatbot with Photoshop Studio editing guidance (no API key)
+
+The chatbot is available from **Help → Chatbot**. It uses the anonymous DG AI API, so no API key or account is needed. An internet connection is required; anonymous requests are rate-limited and service availability may change. Chat messages are sent to the provider. It provides guidance and does not directly edit the canvas.
 
 ### Layers
 
@@ -48,8 +51,11 @@ The Effects menu contains grouped effects for easier navigation:
 - Artistic and stylize: edge detect, posterize, threshold, emboss, vignette, pixelate, solarize, film grain, and glow
 - Quality and detail: blur, sharpen, auto enhance, smart sharpen, reduce noise, and clarity
 - Adjustable brightness, contrast, and saturation controls
+- Portrait effects for face smoothing and warming, plus automatic hair and beard recoloring from the Effects menu
 
 Effects can be applied to the full canvas or to the selected layer, and they support Undo and Redo.
+
+To recolor hair or a beard, use the Select tool to make a tight rectangular selection around that region, then choose Effects → Portrait Effects → Hair or Beard → Color. Pick a color and the app recolors likely hair/beard pixels in the selected area while skipping likely skin tones and preserving brightness. The segmentation is heuristic, so a tight selection improves results.
 
 ## Requirements
 

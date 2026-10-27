@@ -15,11 +15,18 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.Path2D;
+import java.awt.geom.Point2D;
 import java.awt.font.GlyphVector;
 import java.awt.datatransfer.DataFlavor;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Properties;
 import java.util.ArrayList;
 import java.util.List;
@@ -65,8 +72,10 @@ public class PhotoshopStudio extends JFrame {
     private final Preferences workspacePreferences = Preferences.userNodeForPackage(PhotoshopStudio.class);
 
     private enum Tool { MOVE, BRUSH, ERASER, TEXT, CROP, SHAPE, SELECT, EYEDROPPER, FILL, GRADIENT, ROTATE }
-    private enum ShapeKind { RECTANGLE, ELLIPSE, LINE, TRIANGLE, PENTAGON, HEXAGON, STAR, ROUND_RECTANGLE, DIAMOND, ARROW, CROSS }
+    private enum ShapeKind { RECTANGLE, ROUND_RECTANGLE, ELLIPSE, LINE, ARROW, TRIANGLE, DIAMOND, PENTAGON, HEXAGON, OCTAGON, STAR, SIX_POINT_STAR, HEART, CLOUD, LIGHTNING, TRAPEZOID, PARALLELOGRAM, CHEVRON, PLUS, CROSS, SPEECH_BUBBLE, CYLINDER, ARC, PIE }
+    private enum BrushKind { ROUND, SOFT, SQUARE, MARKER, SPRAY, CHALK, CALLIGRAPHY, DOTTED }
     private ShapeKind shapeKind = ShapeKind.RECTANGLE;
+    private BrushKind brushKind = BrushKind.ROUND;
 
     private static final class MovableItem {
         BufferedImage image; int x, y; String name; float opacity = 1f; boolean visible = true;
@@ -226,16 +235,20 @@ public class PhotoshopStudio extends JFrame {
         JMenuItem merge = new JMenuItem("Merge / Flatten Images"); merge.addActionListener(e -> mergeImages());
         JMenuItem perspectiveCrop = new JMenuItem("Perspective Crop..."); perspectiveCrop.addActionListener(e -> perspectiveCrop());
         imageMenu.add(rotate); imageMenu.add(flipH); imageMenu.add(perspectiveCrop); imageMenu.add(merge); imageMenu.addSeparator(); imageMenu.add(info);
-        JMenu effects = new JMenu("Effects"); JMenu colorEffects = new JMenu("Color & Tone"); JMenu artisticEffects = new JMenu("Artistic & Stylize"); JMenu qualityEffects = new JMenu("Quality & Detail"); JMenu adjustments = new JMenu("Adjustments");
+        JMenu effects = new JMenu("Effects"); JMenu colorEffects = new JMenu("Color & Tone"); JMenu artisticEffects = new JMenu("Artistic & Stylize"); JMenu qualityEffects = new JMenu("Quality & Detail"); JMenu adjustments = new JMenu("Adjustments"); JMenu portraitEffects = new JMenu("Portrait Effects");
         addEffect(colorEffects, "Grayscale", "grayscale"); addEffect(colorEffects, "Invert Colors", "invert"); addEffect(colorEffects, "Sepia", "sepia"); addEffect(colorEffects, "Cool Tone", "cool"); addEffect(colorEffects, "Warm Tone", "warm"); addEffect(colorEffects, "Colorize", "colorize"); addEffect(colorEffects, "Duotone", "duotone"); addEffect(colorEffects, "Exposure", "exposure"); addEffect(colorEffects, "Highlights", "highlights"); addEffect(colorEffects, "Shadows", "shadows"); addEffect(colorEffects, "Gamma", "gamma");
         addEffect(artisticEffects, "Edge Detect", "edge"); addEffect(artisticEffects, "Posterize", "posterize"); addEffect(artisticEffects, "Threshold", "threshold"); addEffect(artisticEffects, "Emboss", "emboss"); addEffect(artisticEffects, "Vignette", "vignette"); addEffect(artisticEffects, "Pixelate", "pixelate"); addEffect(artisticEffects, "Solarize", "solarize"); addEffect(artisticEffects, "Film Grain", "filmGrain"); addEffect(artisticEffects, "Glow", "glow");
         addEffect(qualityEffects, "Blur", "blur"); addEffect(qualityEffects, "Sharpen", "sharpen"); addEffect(qualityEffects, "Auto Enhance", "autoEnhance"); addEffect(qualityEffects, "Smart Sharpen", "smartSharpen"); addEffect(qualityEffects, "Reduce Noise", "reduceNoise"); addEffect(qualityEffects, "Clarity", "clarity");
         addAdjustment(adjustments, "Brightness...", "brightness"); addAdjustment(adjustments, "Contrast...", "contrastAdjust"); addAdjustment(adjustments, "Saturation...", "saturationAdjust");
-        effects.add(colorEffects); effects.add(artisticEffects); effects.add(qualityEffects); effects.add(adjustments);
+        JMenu faceEffects = new JMenu("Face"); addPortraitEffect(faceEffects, "Smooth Skin", "smoothSkin"); addPortraitEffect(faceEffects, "Warm Skin Tone", "warmSkin");
+        JMenu hairEffects = new JMenu("Hair"); addPortraitColorEffect(hairEffects, "Hair Color...", "hairColor");
+        JMenu beardEffects = new JMenu("Beard"); addPortraitColorEffect(beardEffects, "Beard Color...", "beardColor");
+        portraitEffects.add(faceEffects); portraitEffects.add(hairEffects); portraitEffects.add(beardEffects);
+        effects.add(colorEffects); effects.add(artisticEffects); effects.add(qualityEffects); effects.add(portraitEffects); effects.add(adjustments);
         JMenu view = new JMenu("View");
         addZoomItem(view, "50%", 0.5); addZoomItem(view, "100%", 1.0); addZoomItem(view, "150%", 1.5); addZoomItem(view, "200%", 2.0);
         view.addSeparator(); JMenuItem reset = new JMenuItem("Reset View"); reset.addActionListener(e -> { canvas.setZoom(1.0); updateStatus("View reset"); }); view.add(reset);
-        JMenu help = new JMenu("Help"); JMenuItem about = new JMenuItem("About Photoshop Studio"); about.addActionListener(e -> showAboutDialog()); help.add(about);
+        JMenu help = new JMenu("Help"); JMenuItem aiChat = new JMenuItem("Chatbot"); aiChat.addActionListener(e -> showAiChat()); JMenuItem about = new JMenuItem("About Photoshop Studio"); about.addActionListener(e -> showAboutDialog()); help.add(aiChat); help.add(about);
         bar.add(file); bar.add(edit); bar.add(imageMenu); bar.add(effects); bar.add(view); bar.add(help); return bar;
     }
 
@@ -256,7 +269,61 @@ public class PhotoshopStudio extends JFrame {
         JMenuItem item = new JMenuItem(label); item.addActionListener(e -> applyEffect(effect)); menu.add(item);
     }
 
+    private void addPortraitEffect(JMenu menu, String label, String effect) { JMenuItem item = new JMenuItem(label); item.addActionListener(e -> applyPortraitEffect(effect, null)); menu.add(item); }
+    private void addPortraitColorEffect(JMenu menu,String label,String effect) { JMenuItem item=new JMenuItem(label); item.addActionListener(e->{if(!requirePortraitSelection())return;Color chosen=JColorChooser.showDialog(this,label,brushColor);if(chosen!=null)applyPortraitEffect(effect,chosen);});menu.add(item); }
     private void addAdjustment(JMenu menu, String label, String type) { JMenuItem item = new JMenuItem(label); item.addActionListener(e -> adjustColor(type)); menu.add(item); }
+
+    private void showAiChat() {
+        JDialog dialog=new JDialog(this,"Chatbot",false);dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);dialog.setIconImage(createAppIcon());
+        JPanel root=new JPanel(new BorderLayout(0,0));root.setBackground(Color.WHITE);
+        JPanel header=new JPanel(new BorderLayout(12,0));header.setBackground(new Color(44,48,56));header.setBorder(BorderFactory.createEmptyBorder(13,16,13,14));
+        JLabel mark=new JLabel("Ps");mark.setOpaque(true);mark.setHorizontalAlignment(SwingConstants.CENTER);mark.setForeground(Color.WHITE);mark.setBackground(new Color(54,112,194));mark.setFont(mark.getFont().deriveFont(Font.BOLD,18f));mark.setPreferredSize(new Dimension(42,42));
+        JPanel titleBlock=new JPanel();titleBlock.setOpaque(false);titleBlock.setLayout(new BoxLayout(titleBlock,BoxLayout.Y_AXIS));JLabel title=new JLabel("Photoshop Studio Chatbot");title.setForeground(Color.WHITE);title.setFont(title.getFont().deriveFont(Font.BOLD,16f));JLabel subtitle=new JLabel("Ask about tools, layers, and editing workflows");subtitle.setForeground(new Color(200,204,212));titleBlock.add(title);titleBlock.add(Box.createVerticalStrut(3));titleBlock.add(subtitle);
+        JButton clear=new JButton("Clear chat");clear.setToolTipText("Start a fresh conversation");clear.setFocusable(false);JPanel heading=new JPanel(new BorderLayout(10,0));heading.setOpaque(false);heading.add(mark,BorderLayout.WEST);heading.add(titleBlock,BorderLayout.CENTER);header.add(heading,BorderLayout.CENTER);header.add(clear,BorderLayout.EAST);
+        JPanel transcript=new JPanel();transcript.setLayout(new BoxLayout(transcript,BoxLayout.Y_AXIS));transcript.setBackground(new Color(247,248,250));transcript.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
+        JScrollPane transcriptScroll=new JScrollPane(transcript);transcriptScroll.setBorder(BorderFactory.createEmptyBorder());transcriptScroll.getViewport().setBackground(new Color(247,248,250));transcriptScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        JTextArea message=new JTextArea(3,30){@Override protected void paintComponent(Graphics graphics){super.paintComponent(graphics);if(getText().isEmpty()&&!hasFocus()){graphics.setColor(new Color(145,150,160));graphics.drawString("Ask about tools, effects, or editing…",getInsets().left+2,getInsets().top+getFontMetrics(getFont()).getAscent());}}};message.setLineWrap(true);message.setWrapStyleWord(true);message.setFont(new Font("Segoe UI",Font.PLAIN,14));message.setBorder(BorderFactory.createEmptyBorder(8,10,8,10));message.setToolTipText("Type a message; Ctrl+Enter sends it");
+        JPanel inputFrame=new JPanel(new BorderLayout());inputFrame.setBackground(Color.WHITE);inputFrame.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(190,197,208),1,true),BorderFactory.createEmptyBorder(1,1,1,1)));JScrollPane messageScroll=new JScrollPane(message);messageScroll.setBorder(BorderFactory.createEmptyBorder());messageScroll.setOpaque(false);messageScroll.getViewport().setOpaque(false);messageScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);inputFrame.add(messageScroll,BorderLayout.CENTER);
+        JButton send=new ChatSendButton();send.setToolTipText("Send message (Ctrl+Enter)");send.setPreferredSize(new Dimension(98,48));
+        message.addFocusListener(new FocusAdapter(){private void update(){Color line=message.hasFocus()?new Color(58,125,210):new Color(190,197,208);inputFrame.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(line,message.hasFocus()?2:1,true),BorderFactory.createEmptyBorder(1,1,1,1)));} @Override public void focusGained(FocusEvent e){update();}@Override public void focusLost(FocusEvent e){update();}});
+        JLabel state=new JLabel("●  Online chatbot · no API key");state.setForeground(new Color(65,125,85));state.setBorder(BorderFactory.createEmptyBorder(0,2,0,0));
+        JLabel privacy=new JLabel("Messages are sent to the online provider. Free anonymous use is rate-limited.");privacy.setForeground(new Color(105,110,120));privacy.setFont(privacy.getFont().deriveFont(11f));
+        JPanel inputRow=new JPanel(new BorderLayout(10,0));inputRow.setOpaque(false);inputRow.add(inputFrame,BorderLayout.CENTER);inputRow.add(send,BorderLayout.EAST);
+        JPanel composer=new JPanel(new BorderLayout(0,7));composer.setBackground(Color.WHITE);composer.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1,0,0,0,new Color(225,228,233)),BorderFactory.createEmptyBorder(10,14,11,14)));composer.add(inputRow,BorderLayout.CENTER);JPanel foot=new JPanel(new BorderLayout(0,4));foot.setOpaque(false);foot.add(state,BorderLayout.NORTH);foot.add(privacy,BorderLayout.SOUTH);composer.add(foot,BorderLayout.SOUTH);
+        root.add(header,BorderLayout.NORTH);root.add(transcriptScroll,BorderLayout.CENTER);root.add(composer,BorderLayout.SOUTH);dialog.setContentPane(root);dialog.setMinimumSize(new Dimension(560,440));dialog.setSize(720,560);dialog.setLocationRelativeTo(this);
+        List<String[]> history=new ArrayList<>();appendChatLine(transcript,transcriptScroll,"Chatbot","Hi! I can help with Photoshop Studio tools and image-editing workflows. What would you like to do?");
+        Runnable sendMessage=()->{String prompt=message.getText().trim();if(prompt.isEmpty()||!send.isEnabled())return;appendChatLine(transcript,transcriptScroll,"You",prompt);history.add(new String[]{"user",prompt});message.setText("");send.setEnabled(false);clear.setEnabled(false);state.setText("●  Waiting for the online chatbot…");state.setForeground(new Color(173,117,35));List<String[]> snapshot=new ArrayList<>(history);
+            SwingWorker<String,Void> worker=new SwingWorker<>(){@Override protected String doInBackground()throws Exception{return requestFreeOnlineReply(snapshot);}@Override protected void done(){send.setEnabled(true);clear.setEnabled(true);try{String reply=get();history.add(new String[]{"assistant",reply});appendChatLine(transcript,transcriptScroll,"Chatbot",reply);state.setText("●  Online chatbot · no API key");state.setForeground(new Color(65,125,85));}catch(Exception ex){Throwable cause=ex.getCause()==null?ex:ex.getCause();state.setText("●  Connection failed · try again");state.setForeground(new Color(175,65,65));appendChatLine(transcript,transcriptScroll,"Connection error",cause.getMessage()==null?cause.toString():cause.getMessage());}message.requestFocusInWindow();}};worker.execute();};
+        send.addActionListener(e->sendMessage.run());message.getInputMap().put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER,InputEvent.CTRL_DOWN_MASK),"send-chat");message.getActionMap().put("send-chat",new AbstractAction(){@Override public void actionPerformed(ActionEvent e){sendMessage.run();}});
+        clear.addActionListener(e->{history.clear();transcript.removeAll();appendChatLine(transcript,transcriptScroll,"Chatbot","New conversation started. How can I help?");state.setText("●  Online chatbot · no API key");state.setForeground(new Color(65,125,85));});
+        dialog.setVisible(true);message.requestFocusInWindow();
+    }
+
+    private void appendChatLine(JPanel transcript,JScrollPane scroll,String speaker,String text){boolean user=speaker.equals("You"),error=speaker.equals("Connection error");Color fill=user?new Color(224,237,255):error?new Color(255,235,234):Color.WHITE;Color accent=user?new Color(43,99,174):error?new Color(175,65,65):new Color(47,119,79);int maxWidth=Math.min(520,Math.max(260,scroll.getViewport().getWidth()-100));JPanel bubble=new JPanel(new BorderLayout(0,5)){@Override protected void paintComponent(Graphics graphics){Graphics2D g=(Graphics2D)graphics.create();g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);g.setColor(fill);g.fillRoundRect(0,0,getWidth()-1,getHeight()-1,16,16);g.setColor(new Color(224,228,234));g.drawRoundRect(0,0,getWidth()-1,getHeight()-1,16,16);g.dispose();}};bubble.setOpaque(false);bubble.setBorder(BorderFactory.createEmptyBorder(10,13,10,13));JLabel who=new JLabel(speaker);who.setForeground(accent);who.setFont(who.getFont().deriveFont(Font.BOLD,12f));JTextArea content=new JTextArea(text);content.setEditable(false);content.setOpaque(false);content.setLineWrap(true);content.setWrapStyleWord(true);content.setFont(new Font("Segoe UI",Font.PLAIN,14));content.setForeground(new Color(40,43,49));content.setBorder(null);content.setSize(new Dimension(maxWidth-28,Short.MAX_VALUE));Dimension textSize=content.getPreferredSize();content.setPreferredSize(new Dimension(maxWidth-28,Math.max(22,textSize.height)));bubble.add(who,BorderLayout.NORTH);bubble.add(content,BorderLayout.CENTER);bubble.setPreferredSize(new Dimension(maxWidth,Math.max(58,textSize.height+42)));bubble.setMaximumSize(new Dimension(maxWidth,Math.max(58,textSize.height+42)));JPanel row=new JPanel(new BorderLayout());row.setOpaque(false);row.setBorder(BorderFactory.createEmptyBorder(3,5,5,5));row.setAlignmentX(Component.LEFT_ALIGNMENT);if(user)row.add(bubble,BorderLayout.EAST);else row.add(bubble,BorderLayout.WEST);row.setPreferredSize(new Dimension(Math.max(500,scroll.getViewport().getWidth()),Math.max(64,textSize.height+52)));row.setMaximumSize(new Dimension(Integer.MAX_VALUE,Math.max(64,textSize.height+52)));transcript.add(row);transcript.revalidate();transcript.repaint();SwingUtilities.invokeLater(()->scroll.getVerticalScrollBar().setValue(scroll.getVerticalScrollBar().getMaximum()));}
+
+    private static final class ChatSendButton extends JButton {
+        ChatSendButton(){super("Send",new ChatSendIcon());setForeground(Color.WHITE);setFont(getFont().deriveFont(Font.BOLD,13f));setHorizontalTextPosition(SwingConstants.LEFT);setIconTextGap(8);setFocusPainted(false);setBorder(BorderFactory.createEmptyBorder(8,13,8,13));setContentAreaFilled(false);setOpaque(false);}
+        @Override protected void paintComponent(Graphics graphics){Graphics2D g=(Graphics2D)graphics.create();g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);ButtonModel m=getModel();Color base=!isEnabled()?new Color(155,165,180):m.isPressed()?new Color(35,86,155):m.isRollover()?new Color(62,132,220):new Color(48,112,198);g.setColor(base);g.fillRoundRect(0,0,getWidth(),getHeight(),14,14);g.dispose();super.paintComponent(graphics);}
+    }
+
+    private static final class ChatSendIcon implements Icon {
+        @Override public int getIconWidth(){return 19;}@Override public int getIconHeight(){return 19;}
+        @Override public void paintIcon(Component c,Graphics graphics,int x,int y){Graphics2D g=(Graphics2D)graphics.create();g.setColor(Color.WHITE);g.setStroke(new BasicStroke(1.8f,BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND));Path2D p=new Path2D.Double();p.moveTo(x+2,y+8);p.lineTo(x+17,y+2);p.lineTo(x+12,y+17);p.lineTo(x+8,y+11);p.closePath();g.draw(p);g.drawLine(x+8,y+11,x+17,y+2);g.dispose();}
+    }
+
+    private String requestFreeOnlineReply(List<String[]> history)throws Exception{
+        StringBuilder messages=new StringBuilder("[\n{\"role\":\"system\",\"content\":").append(jsonEscape("You are the Photoshop Studio in-app assistant. Give helpful, concise answers about image editing and this Java Swing app. Do not claim to directly modify the user's image.")).append('}');
+        int start=Math.max(0,history.size()-20);for(int i=start;i<history.size();i++){String[] entry=history.get(i);messages.append(",\n{\"role\":").append(jsonEscape(entry[0])).append(",\"content\":").append(jsonEscape(entry[1])).append('}');}messages.append("\n]");
+        String body="{\"model\":\"gpt-oss\",\"messages\":"+messages+"}";
+        HttpRequest request=HttpRequest.newBuilder(URI.create("https://dg-ai.scriptsnsenses.workers.dev/v1/chat")).timeout(Duration.ofSeconds(90)).header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(body,StandardCharsets.UTF_8)).build();
+        HttpResponse<String> response=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(20)).build().send(request,HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if(response.statusCode()<200||response.statusCode()>=300){String detail=extractJsonString(response.body(),"error");throw new IOException("Online chatbot error ("+response.statusCode()+"): "+(detail==null?response.body():detail));}
+        String reply=extractJsonString(response.body(),"reply");if(reply==null||reply.isBlank())throw new IOException("The online chatbot returned an empty response.");return reply;
+    }
+
+    private String jsonEscape(String value){StringBuilder out=new StringBuilder("\"");for(int i=0;i<value.length();i++){char c=value.charAt(i);switch(c){case '"'->out.append("\\\"");case '\\'->out.append("\\\\");case '\n'->out.append("\\n");case '\r'->out.append("\\r");case '\t'->out.append("\\t");default->{if(c<0x20)out.append(String.format("\\u%04x",(int)c));else out.append(c);}}}return out.append('"').toString();}
+
+    private String extractJsonString(String json,String key){int keyAt=json.indexOf("\""+key+"\"");if(keyAt<0)return null;int colon=json.indexOf(':',keyAt+key.length()+2);if(colon<0)return null;int i=colon+1;while(i<json.length()&&Character.isWhitespace(json.charAt(i)))i++;if(i>=json.length()||json.charAt(i)!='\"')return null;i++;StringBuilder out=new StringBuilder();while(i<json.length()){char c=json.charAt(i++);if(c=='\"')return out.toString();if(c!='\\'){out.append(c);continue;}if(i>=json.length())break;char esc=json.charAt(i++);switch(esc){case '"','\\','/'->out.append(esc);case 'b'->out.append('\b');case 'f'->out.append('\f');case 'n'->out.append('\n');case 'r'->out.append('\r');case 't'->out.append('\t');case 'u'->{if(i+4<=json.length()){try{out.append((char)Integer.parseInt(json.substring(i,i+4),16));i+=4;}catch(NumberFormatException ignored){}}}default->out.append(esc);}}return null;}
 
     private void showAboutDialog() {
         JDialog dialog = new JDialog(this, "About Photoshop Studio", true);
@@ -377,6 +444,7 @@ public class PhotoshopStudio extends JFrame {
         JButton color = new JButton("Color", new EditorIcon("color")); colorButton = color; color.setToolTipText("Choose brush/text color");
         JSlider size = new JSlider(2, 80, brushSize); brushSizeSlider = size; size.setToolTipText("Brush and text size"); size.setPreferredSize(new Dimension(140, 28));
         size.addChangeListener(e -> brushSize = size.getValue());
+        JComboBox<BrushKind> brushType = new JComboBox<>(BrushKind.values()); brushType.setSelectedItem(brushKind); brushType.setToolTipText("Brush style"); brushType.setRenderer(new DefaultListCellRenderer(){@Override public Component getListCellRendererComponent(JList<?> list,Object value,int index,boolean selected,boolean focus){JLabel label=(JLabel)super.getListCellRendererComponent(list,value,index,selected,focus);if(value instanceof BrushKind kind){label.setText(brushKindLabel(kind));label.setIcon(new BrushPreviewIcon(kind));}return label;}}); brushType.setPreferredSize(new Dimension(145,27)); brushType.addActionListener(e->{if(brushType.getSelectedItem() instanceof BrushKind kind){brushKind=kind;brushType.setToolTipText("Brush style: "+brushKindLabel(kind));}});
         brightnessSlider = new JSlider(-100, 100, appliedBrightnessValue); contrastSlider = new JSlider(-100, 100, appliedContrastValue); saturationSlider = new JSlider(-100, 100, appliedSaturationValue);
         JSlider brightness = brightnessSlider, contrast = contrastSlider, saturation = saturationSlider;
         brightness.setToolTipText("Brightness adjustment"); contrast.setToolTipText("Contrast adjustment"); saturation.setToolTipText("Saturation adjustment");
@@ -385,8 +453,9 @@ public class PhotoshopStudio extends JFrame {
         contrast.addMouseListener(new MouseAdapter() { @Override public void mouseReleased(MouseEvent e) { applyAdjustmentValue("contrastAdjust", contrast.getValue()); } });
         saturation.addMouseListener(new MouseAdapter() { @Override public void mouseReleased(MouseEvent e) { applyAdjustmentValue("saturationAdjust", saturation.getValue()); } });
         JButton applyAdjustments = new JButton("Apply"); applyAdjustments.setToolTipText("Apply brightness, contrast, and saturation"); applyAdjustments.addActionListener(e -> { applyAdjustmentValue("brightness", brightness.getValue()); applyAdjustmentValue("contrastAdjust", contrast.getValue()); applyAdjustmentValue("saturationAdjust", saturation.getValue()); });
-        JComboBox<String> shapeType = new JComboBox<>(new String[]{"Rectangle", "Ellipse", "Line", "Triangle", "Pentagon", "Hexagon", "Star", "Rounded Rectangle", "Diamond", "Arrow", "Cross"}); shapeType.setToolTipText("Shape type");
-        shapeType.addActionListener(e -> shapeKind = ShapeKind.values()[shapeType.getSelectedIndex()]);
+        JComboBox<ShapeKind> shapeType = new JComboBox<>(ShapeKind.values()); shapeType.setToolTipText("Shape: Rectangle"); shapeType.setRenderer(new ShapeListRenderer()); shapeType.setMaximumRowCount(10);
+        shapeType.getAccessibleContext().setAccessibleName("Shape picker"); shapeType.getAccessibleContext().setAccessibleDescription("Choose a shape by its icon");
+        shapeType.addActionListener(e -> { shapeKind = (ShapeKind) shapeType.getSelectedItem(); if(shapeKind!=null) shapeType.setToolTipText("Shape: "+shapeKindLabel(shapeKind)); });
         redSlider = colorSlider(brushColor.getRed()); greenSlider = colorSlider(brushColor.getGreen()); blueSlider = colorSlider(brushColor.getBlue()); JSlider red = redSlider, green = greenSlider, blue = blueSlider;
         colorPreviewPanel = new JPanel(); JPanel colorPreview = colorPreviewPanel; colorPreview.setPreferredSize(new Dimension(22, 22)); colorPreview.setBackground(brushColor); colorPreview.setBorder(BorderFactory.createLineBorder(Color.DARK_GRAY)); colorPreview.setToolTipText("Current color");
         javax.swing.event.ChangeListener rgb = e -> { brushColor = new Color(red.getValue(), green.getValue(), blue.getValue()); colorPreview.setBackground(brushColor); color.setBackground(brushColor); };
@@ -400,11 +469,11 @@ public class PhotoshopStudio extends JFrame {
         JButton fit = new JButton("Fit", new EditorIcon("fit")); fit.setToolTipText("Fit image to available canvas");
         fit.addActionListener(e -> { int vw = Math.max(1, canvasScroll.getViewport().getWidth() - 40), vh = Math.max(1, canvasScroll.getViewport().getHeight() - 40); double fitZoom = Math.min((double) vw / image.getWidth(), (double) vh / image.getHeight()); canvas.setZoom(fitZoom); updateStatus("Fit view"); });
         JButton shadow = new JButton("Shadow", new EditorIcon("shadow")); shadow.setToolTipText("Add shadow to selected layer"); shadow.addActionListener(e -> applyShadow());
-        shapeType.setPreferredSize(new Dimension(90, 25)); cropType.setPreferredSize(new Dimension(115, 25)); size.setPreferredSize(new Dimension(70, 22));
+        shapeType.setPreferredSize(new Dimension(175, 29)); cropType.setPreferredSize(new Dimension(115, 25)); size.setPreferredSize(new Dimension(70, 22));
         adjustments.setPreferredSize(new Dimension(95, 36));
         JPanel toolRow = toolbarRow(); toolRow.setLayout(new FlowLayout(FlowLayout.LEFT, 2, 0));
         toolRow.add(undoButton); toolRow.add(redoButton); toolRow.add(new JSeparator(SwingConstants.VERTICAL));
-        toolRow.add(move); toolRow.add(brush); toolRow.add(erase); toolRow.add(text); toolRow.add(select); toolRow.add(eyedropper); toolRow.add(fill); toolRow.add(gradient); toolRow.add(rotate);
+        toolRow.add(move); toolRow.add(brush); toolRow.add(brushType); toolRow.add(erase); toolRow.add(text); toolRow.add(select); toolRow.add(eyedropper); toolRow.add(fill); toolRow.add(gradient); toolRow.add(rotate);
 
         JPanel optionsRow = toolbarRow(); optionsRow.setLayout(new FlowLayout(FlowLayout.LEFT, 2, 0));
         optionsRow.add(new JLabel("Size")); optionsRow.add(size); optionsRow.add(crop); optionsRow.add(cropType); optionsRow.add(shape); optionsRow.add(shapeType); optionsRow.add(shadow);
@@ -592,6 +661,72 @@ public class PhotoshopStudio extends JFrame {
     private void applyEffectToItem(MovableItem item, String effect) {
         BufferedImage before = copy(item.image), after = filterCopy(item.image, effect); item.image = after;
         addItemImageEdit(item, before, copy(after)); updateStatus("Effect applied to " + item.name);
+    }
+
+    private boolean requirePortraitSelection() {
+        Rectangle selected = canvas.selection;
+        if (selected != null && selected.width > 1 && selected.height > 1) return true;
+        JOptionPane.showMessageDialog(this, "Choose the Select tool and drag around the face, hair, or beard area first. The effect stays within that selection.", "Select a portrait area", JOptionPane.INFORMATION_MESSAGE);
+        return false;
+    }
+
+    private void applyPortraitEffect(String effect, Color tint) {
+        if (!requirePortraitSelection()) return;
+        boolean hairColoring=effect.equals("hairColor"), beardColoring=effect.equals("beardColor");
+        MovableItem layer = layerList.getSelectedValue();
+        BufferedImage target = layer == null ? image : layer.image;
+        int originX = layer == null ? 0 : layer.x, originY = layer == null ? 0 : layer.y;
+        Rectangle area = canvas.selection.intersection(new Rectangle(originX, originY, target.getWidth(), target.getHeight()));
+        if (area.width < 2 || area.height < 2) { updateStatus("Portrait selection does not overlap the active image"); return; }
+        BufferedImage before = copy(target), after = copy(target);
+        int left = area.x - originX, top = area.y - originY, right = left + area.width, bottom = top + area.height;
+        for (int y = top; y < bottom; y++) for (int x = left; x < right; x++) {
+            int pixel = before.getRGB(x, y), alpha = pixel & 0xff000000;
+            int r=(pixel>>>16)&255, g=(pixel>>>8)&255, b=pixel&255, lum=luminance(pixel);
+            if (hairColoring || beardColoring) {
+                double amount=hairColoring?hairPixelMask(pixel):beardPixelMask(pixel);
+                if(amount>0){float[] original=Color.RGBtoHSB(r,g,b,null),chosen=Color.RGBtoHSB(tint.getRed(),tint.getGreen(),tint.getBlue(),null);float saturation=(float)(original[1]+(Math.max(.55f,chosen[1])-original[1])*amount);int recolored=Color.HSBtoRGB(chosen[0],saturation,original[2]);r=(recolored>>>16)&255;g=(recolored>>>8)&255;b=recolored&255;}
+            } else if (effect.equals("smoothSkin")) {
+                if (lum > 48 && lum < 238) {
+                    int totalR=0,totalG=0,totalB=0,count=0,edge=0;
+                    for(int dy=-1;dy<=1;dy++)for(int dx=-1;dx<=1;dx++){int sx=Math.max(0,Math.min(before.getWidth()-1,x+dx)),sy=Math.max(0,Math.min(before.getHeight()-1,y+dy)),sample=before.getRGB(sx,sy);totalR+=(sample>>>16)&255;totalG+=(sample>>>8)&255;totalB+=sample&255;edge+=Math.abs(lum-luminance(sample));count++;}
+                    double mix=.62*Math.max(0,1-(edge/(double)count)/58.0);
+                    r=clamp((int)(r*(1-mix)+(totalR/(double)count)*mix));g=clamp((int)(g*(1-mix)+(totalG/(double)count)*mix));b=clamp((int)(b*(1-mix)+(totalB/(double)count)*mix));
+                }
+            } else if (effect.equals("warmSkin")) {
+                r=clamp(r+10); g=clamp(g+3); b=clamp(b-7);
+            }
+            after.setRGB(x,y,alpha|(r<<16)|(g<<8)|b);
+        }
+        if (layer == null) { image=after; addImageEdit(before,copy(after)); }
+        else { layer.image=after; addItemImageEdit(layer,before,copy(after)); }
+        canvas.repaint(); updateStatus("Portrait effect applied to selected area");
+    }
+
+    private boolean isLikelySkin(int argb) {
+        int r=(argb>>>16)&255,g=(argb>>>8)&255,b=argb&255;
+        int max=Math.max(r,Math.max(g,b)),min=Math.min(r,Math.min(g,b));
+        double y=.299*r+.587*g+.114*b,cb=128-.168736*r-.331264*g+.5*b,cr=128+.5*r-.418688*g-.081312*b;
+        boolean ycbcr=y>70&&cb>=75&&cb<=130&&cr>=132&&cr<=180;
+        boolean rgb=y>95&&r>95&&g>35&&b>15&&max-min>15&&r>g&&r>b&&Math.abs(r-g)>12;
+        return ycbcr||rgb;
+    }
+
+    private double hairPixelMask(int argb) {
+        if(((argb>>>24)&255)<32||isLikelySkin(argb))return 0;
+        int r=(argb>>>16)&255,g=(argb>>>8)&255,b=argb&255,lum=luminance(argb);
+        double dark=Math.max(0,Math.min(1,(220-lum)/145.0));
+        int range=Math.max(r,Math.max(g,b))-Math.min(r,Math.min(g,b));
+        double gray=range<28&&lum>=45&&lum<190?.58:0;
+        boolean brown=r>=g&&g>=b&&r-g<105&&g-b>5&&lum<205;
+        double brownMask=brown?Math.min(.82,(g-b+24)/100.0):0;
+        return Math.max(dark,Math.max(gray,brownMask));
+    }
+
+    private double beardPixelMask(int argb) {
+        if(((argb>>>24)&255)<32||isLikelySkin(argb))return 0;
+        int lum=luminance(argb);
+        return Math.max(0,Math.min(1,(190-lum)/120.0));
     }
 
     private void perspectiveCrop() {
@@ -819,6 +954,7 @@ public class PhotoshopStudio extends JFrame {
         private MovableItem editingItem;
         private BufferedImage itemBeforeErase;
         private int itemLastX, itemLastY;
+        private boolean itemStrokeHasPoint;
         private int pickerScreenX, pickerScreenY; private Point pickerPoint; private Color pickerColor = Color.BLACK; private boolean pickerHover;
         private final List<Point> perspectivePoints = new ArrayList<>();
         private MovableItem rotatingItem;
@@ -875,7 +1011,7 @@ public class PhotoshopStudio extends JFrame {
                     }
                     if (tool == Tool.BRUSH || tool == Tool.ERASER) {
                         MovableItem hit = findItem(point.x, point.y);
-                        if (hit != null) { editingItem = hit; layerList.setSelectedValue(hit, true); itemBeforeErase = copy(hit.image); itemLastX = point.x - hit.x; itemLastY = point.y - hit.y; drawing = true; editItemAt(point.x, point.y); return; }
+                        if (hit != null) { editingItem = hit; layerList.setSelectedValue(hit, true); itemBeforeErase = copy(hit.image); itemLastX = point.x - hit.x; itemLastY = point.y - hit.y; itemStrokeHasPoint=false; drawing = true; editItemAt(point.x, point.y); return; }
                     }
                     drawing = true; hasLastPoint = false;
                     if (tool == Tool.CROP) { cropStartX = cropEndX = point.x; cropStartY = cropEndY = point.y; repaint(); }
@@ -900,7 +1036,7 @@ public class PhotoshopStudio extends JFrame {
                     if (SwingUtilities.isRightMouseButton(e)) return;
                     if (!drawing) return;
                     drawing = false;
-                    if (editingItem != null) { MovableItem erased = editingItem; BufferedImage before = itemBeforeErase; BufferedImage after = copy(erased.image); editingItem = null; undo.addEdit(new AbstractUndoableEdit() { @Override public void undo() { super.undo(); erased.image = copy(before); repaint(); } @Override public void redo() { super.redo(); erased.image = copy(after); repaint(); } }); repaint(); return; }
+                    if (editingItem != null) { MovableItem erased = editingItem; BufferedImage before = itemBeforeErase; BufferedImage after = copy(erased.image); editingItem = null; itemStrokeHasPoint=false; undo.addEdit(new AbstractUndoableEdit() { @Override public void undo() { super.undo(); erased.image = copy(before); repaint(); } @Override public void redo() { super.redo(); erased.image = copy(after); repaint(); } }); repaint(); return; }
                     if (rotatingItem != null) { MovableItem rotatedItem = rotatingItem; BufferedImage before = rotateBefore; BufferedImage after = copy(rotatedItem.image); int oldX = rotateOldX, oldY = rotateOldY, newX = rotatedItem.x, newY = rotatedItem.y; rotatingItem = null; rotateBefore = null; undo.addEdit(new AbstractUndoableEdit() { @Override public void undo() { super.undo(); rotatedItem.image = copy(before); rotatedItem.x = oldX; rotatedItem.y = oldY; revalidate(); repaint(); } @Override public void redo() { super.redo(); rotatedItem.image = copy(after); rotatedItem.x = newX; rotatedItem.y = newY; revalidate(); repaint(); } }); revalidate(); repaint(); return; }
                     if (selectedItem != null) { MovableItem moved = selectedItem; int newX = moved.x, newY = moved.y; selectedItem = null; undo.addEdit(new AbstractUndoableEdit() { @Override public void undo() { super.undo(); moved.x = oldItemX; moved.y = oldItemY; repaint(); } @Override public void redo() { super.redo(); moved.x = newX; moved.y = newY; repaint(); } }); repaint(); return; }
                     if (tool == Tool.SHAPE) { Point point = imagePoint(e.getX(), e.getY()); shapeEndX = point.x; shapeEndY = point.y; addShape(); return; }
@@ -970,6 +1106,7 @@ public class PhotoshopStudio extends JFrame {
         }
         double getZoom() { return zoom; }
 
+
         @Override public Dimension getPreferredSize() {
             return new Dimension((int) (image.getWidth() * zoom) + 40, (int) (image.getHeight() * zoom) + 40);
         }
@@ -980,14 +1117,12 @@ public class PhotoshopStudio extends JFrame {
             int offsetY = Math.max(20, (getHeight() - scaledHeight) / 2);
             int x = (int) ((screenX - offsetX) / zoom), y = (int) ((screenY - offsetY) / zoom);
             if (x < 0 || y < 0 || x >= image.getWidth() || y >= image.getHeight()) return;
+            if (hasLastPoint && x == lastX && y == lastY) return;
             if (!hasLastPoint) { lastX = x; lastY = y; hasLastPoint = true; }
             Graphics2D g = image.createGraphics();
             if (selection != null) g.clip(selection);
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g.setStroke(new BasicStroke(brushSize, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            if (eraser) g.setComposite(AlphaComposite.Clear); else g.setColor(brushColor);
-            g.drawLine(lastX, lastY, x, y);
-            int radius = brushSize / 2; g.fillOval(x - radius, y - radius, brushSize, brushSize);
+            drawStyledBrush(g,lastX,lastY,x,y,eraser);
             g.dispose(); lastX = x; lastY = y; repaint();
         }
 
@@ -1034,12 +1169,28 @@ public class PhotoshopStudio extends JFrame {
         private void editItemAt(int imageX, int imageY) {
             if (editingItem == null) return;
             int localX = imageX - editingItem.x, localY = imageY - editingItem.y;
+            if(itemStrokeHasPoint&&localX==itemLastX&&localY==itemLastY)return;
             Graphics2D g = editingItem.image.createGraphics();
             if (selection != null) g.clip(new Rectangle(selection.x - editingItem.x, selection.y - editingItem.y, selection.width, selection.height));
-            g.setStroke(new BasicStroke(brushSize, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            if (eraser) g.setComposite(AlphaComposite.Clear); else g.setColor(brushColor);
-            g.drawLine(itemLastX, itemLastY, localX, localY); int radius = brushSize / 2; if (eraser) g.setComposite(AlphaComposite.Clear); g.fillOval(localX - radius, localY - radius, brushSize, brushSize); g.dispose();
-            itemLastX = localX; itemLastY = localY; repaint();
+            drawStyledBrush(g,itemLastX,itemLastY,localX,localY,eraser); g.dispose();
+            itemLastX = localX; itemLastY = localY; itemStrokeHasPoint=true; repaint();
+        }
+
+        private void drawStyledBrush(Graphics2D base,int x1,int y1,int x2,int y2,boolean eraseStroke) {
+            Graphics2D g=(Graphics2D)base.create();g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);
+            if(eraseStroke)g.setComposite(AlphaComposite.Clear);else g.setColor(brushColor);
+            int radius=Math.max(1,brushSize/2);double distance=Math.hypot(x2-x1,y2-y1);int samples=Math.max(1,(int)Math.ceil(distance/Math.max(1,brushSize*.22)));
+            switch(brushKind){
+                case ROUND -> {g.setStroke(new BasicStroke(brushSize,BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND));g.drawLine(x1,y1,x2,y2);g.fillOval(x2-radius,y2-radius,brushSize,brushSize);}
+                case SQUARE -> {g.setStroke(new BasicStroke(brushSize,BasicStroke.CAP_SQUARE,BasicStroke.JOIN_MITER));g.drawLine(x1,y1,x2,y2);g.fillRect(x2-radius,y2-radius,brushSize,brushSize);}
+                case SOFT -> {if(!eraseStroke){Color c=brushColor;for(int i=0;i<=samples;i++){double t=i/(double)samples;float cx=(float)(x1+(x2-x1)*t),cy=(float)(y1+(y2-y1)*t);g.setPaint(new RadialGradientPaint(new Point2D.Float(cx,cy),Math.max(1f,brushSize/2f),new float[]{0,.52f,1},new Color[]{new Color(c.getRed(),c.getGreen(),c.getBlue(),110),new Color(c.getRed(),c.getGreen(),c.getBlue(),48),new Color(c.getRed(),c.getGreen(),c.getBlue(),0)}));g.fillOval((int)(cx-radius),(int)(cy-radius),brushSize,brushSize);}}else{g.setStroke(new BasicStroke(brushSize,BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND));g.drawLine(x1,y1,x2,y2);}}
+                case MARKER -> {if(!eraseStroke)g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,.34f));g.setStroke(new BasicStroke(brushSize,BasicStroke.CAP_SQUARE,BasicStroke.JOIN_ROUND));g.drawLine(x1,y1,x2,y2);g.fillRect(x2-radius,y2-radius,brushSize,brushSize);}
+                case SPRAY -> {java.util.Random random=new java.util.Random((((long)x1)<<32)^((long)y1<<16)^x2^((long)y2<<8)^brushSize);int dots=Math.max(18,(int)(distance*1.8)+brushSize);for(int i=0;i<dots;i++){double t=random.nextDouble(),angle=random.nextDouble()*Math.PI*2,rad=Math.sqrt(random.nextDouble())*radius;int px=(int)Math.round(x1+(x2-x1)*t+Math.cos(angle)*rad),py=(int)Math.round(y1+(y2-y1)*t+Math.sin(angle)*rad);int d=1+random.nextInt(Math.max(1,brushSize/9));if(!eraseStroke)g.setColor(new Color(brushColor.getRed(),brushColor.getGreen(),brushColor.getBlue(),145));g.fillOval(px-d/2,py-d/2,d,d);}}
+                case CHALK -> {g.setStroke(new BasicStroke(brushSize,BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND));g.drawLine(x1,y1,x2,y2);g.fillOval(x2-radius,y2-radius,brushSize,brushSize);if(!eraseStroke){java.util.Random random=new java.util.Random((((long)x1)<<32)^y1^((long)x2<<8)^y2^brushSize);g.setColor(new Color(Math.min(255,brushColor.getRed()+45),Math.min(255,brushColor.getGreen()+45),Math.min(255,brushColor.getBlue()+45),115));for(int i=0;i<Math.max(12,brushSize);i++){double t=random.nextDouble(),angle=random.nextDouble()*Math.PI*2,rad=Math.sqrt(random.nextDouble())*radius;int px=(int)(x1+(x2-x1)*t+Math.cos(angle)*rad),py=(int)(y1+(y2-y1)*t+Math.sin(angle)*rad);g.fillOval(px,py,1+random.nextInt(2),1+random.nextInt(2));}}}
+                case CALLIGRAPHY -> {double angle=-Math.PI/4;for(int i=0;i<=samples;i++){double t=i/(double)samples;Graphics2D dab=(Graphics2D)g.create();dab.translate(x1+(x2-x1)*t,y1+(y2-y1)*t);dab.rotate(angle);dab.fillRoundRect(-Math.max(1,brushSize/5),-radius,Math.max(2,brushSize/2),brushSize,Math.max(1,brushSize/5),Math.max(1,brushSize/5));dab.dispose();}}
+                case DOTTED -> {int diameter=Math.max(2,(int)(brushSize*.62)),gap=Math.max(diameter+2,(int)(brushSize*1.55));int count=Math.max(1,(int)Math.ceil(distance/gap));for(int i=0;i<=count;i++){double t=count==0?0:i/(double)count;int px=(int)Math.round(x1+(x2-x1)*t),py=(int)Math.round(y1+(y2-y1)*t);g.fillOval(px-diameter/2,py-diameter/2,diameter,diameter);}}
+            }
+            g.dispose();
         }
 
         private void addTextAt(int screenX, int screenY) {
@@ -1088,14 +1239,34 @@ public class PhotoshopStudio extends JFrame {
         }
 
         private Polygon polygon(ShapeKind kind, int x, int y, int w, int h) {
-            int sides = kind == ShapeKind.TRIANGLE ? 3 : kind == ShapeKind.PENTAGON ? 5 : kind == ShapeKind.HEXAGON ? 6 : 10;
+            if(kind==ShapeKind.TRAPEZOID)return new Polygon(new int[]{x+w/4,x+3*w/4,x+w,x},new int[]{y,y,y+h,y+h},4);
+            if(kind==ShapeKind.PARALLELOGRAM)return new Polygon(new int[]{x+w/4,x+w,x+3*w/4,x},new int[]{y,y,y+h,y+h},4);
+            if(kind==ShapeKind.CHEVRON)return new Polygon(new int[]{x,x+w/2,x+w,x+3*w/4,x+w/2,x+w/4},new int[]{y,y+h/2,y,y+h,y+h/2,y+h},6);
+            if(kind==ShapeKind.LIGHTNING)return new Polygon(new int[]{x+w/2,x+w/4,x+w/2,x+w/3,x+3*w/4,x+w/2},new int[]{y,y+h/2,y+h/2,y+h,x+2*h/5,y+2*h/5},6);
+            int sides = kind == ShapeKind.TRIANGLE ? 3 : kind == ShapeKind.PENTAGON ? 5 : kind == ShapeKind.HEXAGON ? 6 : kind == ShapeKind.OCTAGON ? 8 : kind == ShapeKind.SIX_POINT_STAR ? 12 : 10;
             Polygon result = new Polygon(); double cx = x + w / 2.0, cy = y + h / 2.0, rx = w / 2.0, ry = h / 2.0;
-            for (int i = 0; i < sides; i++) { double angle = -Math.PI / 2 + i * Math.PI * 2 / sides; double radius = kind == ShapeKind.STAR && i % 2 == 1 ? .45 : 1; result.addPoint((int) (cx + Math.cos(angle) * rx * radius), (int) (cy + Math.sin(angle) * ry * radius)); }
+            for (int i = 0; i < sides; i++) { double angle = -Math.PI / 2 + i * Math.PI * 2 / sides; double radius = (kind == ShapeKind.STAR || kind == ShapeKind.SIX_POINT_STAR) && i % 2 == 1 ? .45 : 1; result.addPoint((int) (cx + Math.cos(angle) * rx * radius), (int) (cy + Math.sin(angle) * ry * radius)); }
             return result;
         }
 
         private void drawShape(Graphics2D g, ShapeKind kind, int x, int y, int w, int h) {
-            if (kind == ShapeKind.RECTANGLE) g.drawRect(x, y, w, h); else if (kind == ShapeKind.ROUND_RECTANGLE) g.drawRoundRect(x, y, w, h, Math.min(w, h) / 3, Math.min(w, h) / 3); else if (kind == ShapeKind.ELLIPSE) g.drawOval(x, y, w, h); else if (kind == ShapeKind.LINE) g.drawLine(x, y, x + w, y + h); else if (kind == ShapeKind.ARROW) { g.drawLine(x, y + h, x + w, y); g.drawLine(x + w, y, x + w - Math.max(8, w / 5), y); g.drawLine(x + w, y, x + w, y + Math.max(8, h / 5)); } else if (kind == ShapeKind.CROSS) { g.drawLine(x, y + h / 2, x + w, y + h / 2); g.drawLine(x + w / 2, y, x + w / 2, y + h); } else if (kind == ShapeKind.DIAMOND) { Polygon d = new Polygon(new int[]{x + w / 2, x + w, x + w / 2, x}, new int[]{y, y + h / 2, y + h, y + h / 2}, 4); g.drawPolygon(d); } else g.drawPolygon(polygon(kind, x, y, w, h));
+            switch(kind){
+                case RECTANGLE -> g.drawRect(x,y,w,h);
+                case ROUND_RECTANGLE -> g.drawRoundRect(x,y,w,h,Math.min(w,h)/3,Math.min(w,h)/3);
+                case ELLIPSE -> g.drawOval(x,y,w,h);
+                case LINE -> g.drawLine(x,y,x+w,y+h);
+                case ARROW -> {g.drawLine(x,y+h,x+w,y);g.drawLine(x+w,y,x+w-Math.max(8,w/5),y);g.drawLine(x+w,y,x+w,y+Math.max(8,h/5));}
+                case CROSS -> {g.drawLine(x,y+h/2,x+w,y+h/2);g.drawLine(x+w/2,y,x+w/2,y+h);}
+                case DIAMOND -> g.drawPolygon(new Polygon(new int[]{x+w/2,x+w,x+w/2,x},new int[]{y,y+h/2,y+h,y+h/2},4));
+                case HEART -> {Path2D p=new Path2D.Double();p.moveTo(x+w/2.0,y+h);p.curveTo(x-w*.1,y+h*.55,x+w*.05,y+h*.05,x+w*.32,y+h*.18);p.curveTo(x+w*.43,y+h*.22,x+w*.48,y+h*.32,x+w/2.0,y+h*.38);p.curveTo(x+w*.52,y+h*.32,x+w*.57,y+h*.22,x+w*.68,y+h*.18);p.curveTo(x+w*.95,y+h*.05,x+w*1.1,y+h*.55,x+w/2.0,y+h);g.draw(p);}
+                case CLOUD -> {Path2D p=new Path2D.Double();p.moveTo(x+w*.18,y+h*.75);p.curveTo(x-w*.02,y+h*.72,x+w*.02,y+h*.42,x+w*.25,y+h*.4);p.curveTo(x+w*.28,y+h*.08,x+w*.65,y+h*.08,x+w*.72,y+h*.38);p.curveTo(x+w*1.04,y+h*.34,x+w*1.02,y+h*.75,x+w*.8,y+h*.78);p.closePath();g.draw(p);}
+                case PLUS -> {Path2D p=new Path2D.Double();p.moveTo(x+w*.4,y);p.lineTo(x+w*.6,y);p.lineTo(x+w*.6,y+h*.4);p.lineTo(x+w,y+h*.4);p.lineTo(x+w,y+h*.6);p.lineTo(x+w*.6,y+h*.6);p.lineTo(x+w*.6,y+h);p.lineTo(x+w*.4,y+h);p.lineTo(x+w*.4,y+h*.6);p.lineTo(x,y+h*.6);p.lineTo(x,y+h*.4);p.lineTo(x+w*.4,y+h*.4);p.closePath();g.draw(p);}
+                case SPEECH_BUBBLE -> {Path2D p=new Path2D.Double();p.moveTo(x,y);p.lineTo(x+w,y);p.lineTo(x+w,y+h*.72);p.lineTo(x+w*.38,y+h*.72);p.lineTo(x+w*.2,y+h);p.lineTo(x+w*.22,y+h*.72);p.lineTo(x,y+h*.72);p.closePath();g.draw(p);}
+                case CYLINDER -> {g.drawOval(x,y,w,h/3);g.drawLine(x,y+h/6,x,y+h*5/6);g.drawLine(x+w,y+h/6,x+w,y+h*5/6);g.drawArc(x,y+h*2/3,w,h/3,180,180);}
+                case ARC -> g.drawArc(x,y,w,h,25,300);
+                case PIE -> g.drawArc(x,y,w,h,30,300);
+                default -> g.drawPolygon(polygon(kind,x,y,w,h));
+            }
         }
 
         private void cropSelection() {
@@ -1198,6 +1369,26 @@ public class PhotoshopStudio extends JFrame {
             else if (type.equals("saturation")) { g.setColor(new Color(225,65,70)); g.fillOval(x+1,y+5,8,8); g.setColor(new Color(45,165,90)); g.fillOval(x+5,y+2,8,8); g.setColor(new Color(55,115,220)); g.fillOval(x+8,y+6,8,8); }
             g.dispose();
         }
+    }
+
+    private String shapeKindLabel(ShapeKind kind) { String words=kind.name().toLowerCase().replace('_',' '); StringBuilder label=new StringBuilder(); for(String word:words.split(" ")){if(label.length()>0)label.append(' ');label.append(Character.toUpperCase(word.charAt(0))).append(word.substring(1));}return label.toString(); }
+    private String brushKindLabel(BrushKind kind) { String words=kind.name().toLowerCase();return Character.toUpperCase(words.charAt(0))+words.substring(1); }
+
+    private final class ShapeListRenderer extends JLabel implements ListCellRenderer<ShapeKind> {
+        ShapeListRenderer(){setHorizontalAlignment(SwingConstants.CENTER);setOpaque(true);setBorder(BorderFactory.createEmptyBorder(2,2,2,2));}
+        @Override public Component getListCellRendererComponent(JList<? extends ShapeKind> list,ShapeKind value,int index,boolean selected,boolean focus){setIcon(value==null?null:new ShapePreviewIcon(value));setText(value==null||index<0?"":shapeKindLabel(value));setHorizontalAlignment(index<0?SwingConstants.CENTER:SwingConstants.LEFT);setToolTipText(value==null?"Shape":shapeKindLabel(value));setBackground(selected?new Color(70,105,155):list.getBackground());setForeground(list.getForeground());setPreferredSize(new Dimension(index<0?34:170,29));return this;}
+    }
+
+    private final class ShapePreviewIcon implements Icon {
+        private final ShapeKind kind; ShapePreviewIcon(ShapeKind kind){this.kind=kind;}
+        @Override public int getIconWidth(){return 25;} @Override public int getIconHeight(){return 23;}
+        @Override public void paintIcon(Component c,Graphics graphics,int x,int y){Graphics2D g=(Graphics2D)graphics.create();g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);g.setColor(new Color(55,120,205));g.setStroke(new BasicStroke(2,BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND));canvas.drawShape(g,kind,x+3,y+3,19,17);g.dispose();}
+    }
+
+    private static final class BrushPreviewIcon implements Icon {
+        private final BrushKind kind; BrushPreviewIcon(BrushKind kind){this.kind=kind;}
+        @Override public int getIconWidth(){return 25;} @Override public int getIconHeight(){return 18;}
+        @Override public void paintIcon(Component c,Graphics graphics,int x,int y){Graphics2D g=(Graphics2D)graphics.create();g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);g.setColor(new Color(45,110,195));g.setStroke(new BasicStroke(kind==BrushKind.CALLIGRAPHY?4:3,BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND));switch(kind){case DOTTED,SPRAY->{for(int i=0;i<5;i++)g.fillOval(x+3+i*4,y+7+(i%2)*2,2,2);}case SQUARE->g.drawLine(x+3,y+8,x+21,y+8);case CALLIGRAPHY->{g.rotate(-Math.PI/4,x+12,y+9);g.drawLine(x+5,y+9,x+19,y+9);}case SOFT->{g.setColor(new Color(45,110,195,70));g.fillOval(x+4,y+2,17,13);g.setColor(new Color(45,110,195,180));g.fillOval(x+8,y+5,9,7);}case MARKER->{g.setStroke(new BasicStroke(5,BasicStroke.CAP_SQUARE,BasicStroke.JOIN_MITER));g.drawLine(x+4,y+9,x+20,y+9);}default->g.drawLine(x+3,y+9,x+21,y+9);}g.dispose();}
     }
 
     private static final class EditorIcon implements Icon {
